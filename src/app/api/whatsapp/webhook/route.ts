@@ -261,6 +261,29 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const decryptedAccessToken = decrypt(config.access_token)
 
+      // CRM Virgo: this handler runs on the service-role client, which
+      // bypasses RLS entirely — is_account_member() (029) rejecting a
+      // suspended account's own members never reaches here. Without an
+      // explicit check, a client Virgo suspended (e.g. non-payment)
+      // would keep silently getting full automated service for free.
+      // Resolved by still recording the raw inbound message (never
+      // lose the client's own customer's message — it's their data,
+      // and it's all there the moment the account is reactivated) but
+      // skipping automation/flow dispatch, which is the part that
+      // actively keeps *delivering service* on Virgo's compute.
+      const { data: accountRow } = await supabaseAdmin()
+        .from('accounts')
+        .select('status')
+        .eq('id', config.account_id)
+        .maybeSingle()
+      const accountSuspended = accountRow?.status === 'suspended'
+      if (accountSuspended) {
+        console.warn(
+          '[webhook] account is suspended — recording inbound messages, skipping automations/flows:',
+          config.account_id,
+        )
+      }
+
       for (let i = 0; i < value.messages.length; i++) {
         const message = value.messages[i]
         const contact = value.contacts[i] || value.contacts[0]
@@ -275,7 +298,8 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           // inserts that need it for NOT NULL FK compliance. Always
           // the admin who saved the WhatsApp config.
           config.user_id,
-          decryptedAccessToken
+          decryptedAccessToken,
+          accountSuspended
         )
       }
     }
@@ -509,7 +533,11 @@ async function processMessage(
   // (contacts, conversations). Always the admin who saved the
   // WhatsApp config; the choice is arbitrary post-017 but stable.
   configOwnerUserId: string,
-  accessToken: string
+  accessToken: string,
+  // CRM Virgo: true when the owning account is suspended. Message
+  // capture still happens either way — only automation/flow dispatch
+  // is gated on this, at the bottom of this function.
+  accountSuspended = false
 ) {
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
@@ -531,6 +559,27 @@ async function processMessage(
     contactRecord.id
   )
   if (!conversation) return
+
+  // CRM Virgo: escopo.md requires every conversation to have a
+  // Kanban card ("nova conversa cria cartão automaticamente na
+  // primeira coluna") — the base wacrm template doesn't do this at
+  // all (deals are created manually from the Pipelines page only,
+  // fully decoupled from the inbox). Best-effort — a missing default
+  // pipeline (accounts created before 027/030 seeded one, or created
+  // via plain signup rather than admin_create_account) must not
+  // block message processing, just skip the card.
+  //
+  // Runs even when accountSuspended — this is data capture/organisation
+  // (same bucket as the contact/conversation/message rows above), not
+  // the "active service" that the suspension gate further down this
+  // function turns off (automations/flows — see that gate's comment).
+  await findOrCreateDealForContact(
+    accountId,
+    configOwnerUserId,
+    contactRecord.id,
+    conversation.id,
+    contactName || senderPhone,
+  )
 
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
@@ -635,6 +684,11 @@ async function processMessage(
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+
+  // CRM Virgo: suspended accounts get message capture (above) but not
+  // active service — stop here before either engine runs. See the
+  // comment on the `accountSuspended` lookup in processWebhook().
+  if (accountSuspended) return
 
   // ============================================================
   // Flow runner dispatch.
@@ -965,4 +1019,82 @@ async function findOrCreateConversation(
   }
 
   return newConv
+}
+
+/**
+ * Ensure this contact has a Kanban card. No-op if one already exists
+ * for this (account, contact) pair — never spawns a second deal just
+ * because the same contact sent another message. Self-healing: also
+ * backfills a card for a contact who existed before this feature
+ * shipped, the next time they message in.
+ *
+ * Best-effort — logs and returns without creating anything if the
+ * account has no default pipeline / open stage yet, rather than
+ * blocking message capture over a missing Kanban setup.
+ */
+async function findOrCreateDealForContact(
+  accountId: string,
+  configOwnerUserId: string,
+  contactId: string,
+  conversationId: string,
+  dealTitle: string,
+) {
+  const { data: existingDeal } = await supabaseAdmin()
+    .from('deals')
+    .select('id')
+    .eq('account_id', accountId)
+    .eq('contact_id', contactId)
+    .limit(1)
+    .maybeSingle()
+
+  if (existingDeal) return
+
+  const { data: pipeline } = await supabaseAdmin()
+    .from('pipelines')
+    .select('id')
+    .eq('account_id', accountId)
+    .eq('is_default', true)
+    .maybeSingle()
+
+  if (!pipeline) {
+    console.warn(
+      '[webhook] no default pipeline for account — skipping auto-deal:',
+      accountId,
+    )
+    return
+  }
+
+  const { data: stage } = await supabaseAdmin()
+    .from('pipeline_stages')
+    .select('id')
+    .eq('pipeline_id', pipeline.id)
+    .eq('stage_type', 'open')
+    .order('position', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (!stage) {
+    console.warn(
+      '[webhook] default pipeline has no open stage — skipping auto-deal:',
+      pipeline.id,
+    )
+    return
+  }
+
+  const { error } = await supabaseAdmin().from('deals').insert({
+    account_id: accountId,
+    user_id: configOwnerUserId,
+    pipeline_id: pipeline.id,
+    stage_id: stage.id,
+    contact_id: contactId,
+    conversation_id: conversationId,
+    title: dealTitle,
+    source: 'whatsapp',
+  })
+
+  if (error) {
+    // Not fatal — the conversation/message already landed. Losing
+    // the auto-card is a UX gap, not data loss.
+    console.error('[webhook] failed to auto-create deal:', error.message)
+  }
 }
