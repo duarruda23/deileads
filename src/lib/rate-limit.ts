@@ -141,6 +141,12 @@ export const RATE_LIMITS = {
    *  while still bounding accidental abuse from a script run in a
    *  loop or a compromised admin session spamming role flips. */
   adminAction: { limit: 30, windowMs: 60_000 },
+  /** Public site-form lead intake (per-IP). Public + unauthenticated
+   *  + writes data, so it's the tightest budget in this file. 10/min
+   *  covers a real visitor mistyping and resubmitting a few times;
+   *  anything past that on one IP is a script, not a person filling
+   *  out a form. */
+  siteLeadIntake: { limit: 10, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't
