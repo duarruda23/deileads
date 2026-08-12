@@ -48,7 +48,7 @@ function LoginPageInner() {
     setError(null);
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data: signInData, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -61,9 +61,20 @@ function LoginPageInner() {
 
     if (inviteToken) {
       router.push(`/join/${encodeURIComponent(inviteToken)}`);
-    } else {
-      router.push("/dashboard");
+      return;
     }
+
+    // Super Admins land on the platform admin area, not the regular
+    // account dashboard — checked here rather than baked into
+    // middleware, which only sees cookies and would need a DB round
+    // trip of its own to know platform_role.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("platform_role")
+      .eq("user_id", signInData.user.id)
+      .maybeSingle();
+
+    router.push(profile?.platform_role === "super_admin" ? "/admin" : "/dashboard");
   };
 
   return (
