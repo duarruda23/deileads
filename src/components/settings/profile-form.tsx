@@ -317,7 +317,12 @@ export function ProfileForm() {
               <div>
                 <dt className="text-slate-500">Role</dt>
                 <dd className="mt-0.5 font-mono text-slate-200">
-                  {profile?.role ?? 'user'}
+                  {/* `profile.role` is a legacy column (migration 017
+                      marked it unused) that never reflects the real
+                      per-account role — always reads back 'user'.
+                      `account_role` is the real owner/admin/agent/
+                      viewer value, same field the sidebar badge uses. */}
+                  {profile?.account_role ?? 'user'}
                 </dd>
               </div>
               <div>

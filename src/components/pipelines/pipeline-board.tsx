@@ -16,9 +16,10 @@ import {
 } from "@dnd-kit/core";
 import type { Deal, PipelineStage } from "@/types";
 import { DealCard } from "./deal-card";
-import { Button } from "@/components/ui/button";
+import { GatedButton } from "@/components/ui/gated-button";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
 import { formatCurrency } from "@/lib/currency";
 
 interface PipelineBoardProps {
@@ -37,6 +38,11 @@ export function PipelineBoard({
   onEditDeal,
 }: PipelineBoardProps) {
   const { defaultCurrency } = useAuth();
+  // Same capability the top-bar "Add Deal" button gates on — the
+  // per-column "+" is a second entry point into deal creation and
+  // must fail the same way (disabled + tooltip) instead of quietly
+  // opening a form a viewer can't actually submit.
+  const canCreateDeals = useCan("send-messages");
   const [activeDealId, setActiveDealId] = useState<string | null>(null);
 
   const sortedStages = useMemo(
@@ -116,6 +122,7 @@ export function PipelineBoard({
               deals={stageDeals}
               totalValue={totalValue}
               currency={defaultCurrency}
+              canAddDeal={canCreateDeals}
               onAddDeal={onAddDeal}
               onEditDeal={onEditDeal}
             />
@@ -190,6 +197,7 @@ function StageColumn({
   deals,
   totalValue,
   currency,
+  canAddDeal,
   onAddDeal,
   onEditDeal,
 }: {
@@ -197,6 +205,7 @@ function StageColumn({
   deals: Deal[];
   totalValue: number;
   currency: string;
+  canAddDeal: boolean;
   onAddDeal: (stageId: string) => void;
   onEditDeal: (deal: Deal) => void;
 }) {
@@ -251,15 +260,17 @@ function StageColumn({
         )}
       </div>
 
-      <Button
+      <GatedButton
         variant="ghost"
         size="sm"
+        canAct={canAddDeal}
+        gateReason="create deals"
         onClick={() => onAddDeal(stage.id)}
         className="mt-3 w-full justify-start border border-dashed border-slate-700 bg-transparent text-slate-400 hover:border-slate-600 hover:bg-slate-800 hover:text-white"
       >
         <Plus className="mr-1 h-3 w-3" />
         Add Deal
-      </Button>
+      </GatedButton>
     </div>
   );
 }

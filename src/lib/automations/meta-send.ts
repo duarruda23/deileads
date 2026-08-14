@@ -7,6 +7,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { resolveWhatsappConfigForOwner } from '@/lib/whatsapp/resolve-config'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -70,7 +71,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // new tenancy column.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, owner_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
@@ -83,12 +84,11 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
+  // 034: reply from the same number this contact's vendor owns, so
+  // the customer's thread stays coherent; falls back to the
+  // account's primary number for unowned/legacy contacts.
+  const config = await resolveWhatsappConfigForOwner(db, input.accountId, contact.owner_id ?? null)
+  if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
 

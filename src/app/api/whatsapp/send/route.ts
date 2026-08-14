@@ -16,6 +16,7 @@ import {
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
+import { resolveWhatsappConfigForOwner } from '@/lib/whatsapp/resolve-config'
 
 export async function POST(request: Request) {
   try {
@@ -123,14 +124,17 @@ export async function POST(request: Request) {
       )
     }
 
-    // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    // Fetch and decrypt WhatsApp config. 034: resolve the number that
+    // belongs to whoever this conversation (or, failing that, the
+    // contact) is assigned to, falling back to the account's primary
+    // number for unassigned/legacy threads.
+    const config = await resolveWhatsappConfigForOwner(
+      supabase,
+      accountId,
+      conversation.assigned_agent_id ?? contact.owner_id ?? null,
+    )
 
-    if (configError || !config) {
+    if (!config) {
       return NextResponse.json(
         { error: 'WhatsApp not configured. Please set up your WhatsApp integration first.' },
         { status: 400 }

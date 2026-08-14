@@ -10,6 +10,9 @@ import {
   UsersRound,
   Coins,
   SlidersHorizontal,
+  KeyRound,
+  Camera,
+  ShoppingBag,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useCan } from '@/hooks/use-can';
@@ -23,6 +26,10 @@ import { AppearancePanel } from '@/components/settings/appearance-panel';
 import { MembersTab } from '@/components/settings/members-tab';
 import { DealsSettings } from '@/components/settings/deals-settings';
 import { CustomFieldsSettings } from '@/components/settings/custom-fields-settings';
+import { LeadIntakeTokens } from '@/components/settings/lead-intake-tokens';
+import { InstagramConfig } from '@/components/settings/instagram-config';
+import { HotmartConfig } from '@/components/settings/hotmart-config';
+import { useDocumentTitle } from '@/hooks/use-document-title';
 
 const TAB_VALUES = [
   'profile',
@@ -33,6 +40,9 @@ const TAB_VALUES = [
   'deals',
   'appearance',
   'members',
+  'site-intake',
+  'instagram',
+  'hotmart',
 ] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
@@ -41,6 +51,7 @@ function isTabValue(v: string | null): v is TabValue {
 }
 
 export default function SettingsPage() {
+  useDocumentTitle('Settings');
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -58,7 +69,17 @@ export default function SettingsPage() {
   // rather than landing on a tab with no trigger or content.
   const resolved: TabValue = isTabValue(queryTab) ? queryTab : 'profile';
   const tab: TabValue =
-    resolved === 'custom-fields' && !canEditSettings ? 'profile' : resolved;
+    (resolved === 'custom-fields' ||
+      resolved === 'site-intake' ||
+      resolved === 'instagram' ||
+      resolved === 'hotmart' ||
+      resolved === 'whatsapp' ||
+      resolved === 'templates' ||
+      resolved === 'tags' ||
+      resolved === 'deals') &&
+    !canEditSettings
+      ? 'profile'
+      : resolved;
 
   const onChange = (next: TabValue) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -85,27 +106,60 @@ export default function SettingsPage() {
             <User className="size-4" />
             Profile
           </TabsTrigger>
-          <TabsTrigger
-            value="whatsapp"
-            className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
-          >
-            <Settings className="size-4" />
-            WhatsApp Config
-          </TabsTrigger>
-          <TabsTrigger
-            value="templates"
-            className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
-          >
-            <MessageSquare className="size-4" />
-            Templates
-          </TabsTrigger>
-          <TabsTrigger
-            value="tags"
-            className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
-          >
-            <Tag className="size-4" />
-            Tags
-          </TabsTrigger>
+          {canEditSettings && (
+            <TabsTrigger
+              value="whatsapp"
+              className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
+            >
+              <Settings className="size-4" />
+              WhatsApp Config
+            </TabsTrigger>
+          )}
+          {canEditSettings && (
+            <TabsTrigger
+              value="instagram"
+              className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
+            >
+              <Camera className="size-4" />
+              Instagram
+            </TabsTrigger>
+          )}
+          {canEditSettings && (
+            <TabsTrigger
+              value="templates"
+              className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
+            >
+              <MessageSquare className="size-4" />
+              Templates
+            </TabsTrigger>
+          )}
+          {canEditSettings && (
+            <TabsTrigger
+              value="tags"
+              className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
+            >
+              <Tag className="size-4" />
+              Tags
+            </TabsTrigger>
+          )}
+          {canEditSettings && (
+            <TabsTrigger
+              value="site-intake"
+              className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
+            >
+              <KeyRound className="size-4" />
+              Site Intake
+            </TabsTrigger>
+          )}
+          {canEditSettings && (
+            <TabsTrigger
+              value="hotmart"
+              className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
+            >
+              <ShoppingBag className="size-4" />
+              Hotmart
+            </TabsTrigger>
+          )}
           {canEditSettings && (
             <TabsTrigger
               value="custom-fields"
@@ -115,13 +169,15 @@ export default function SettingsPage() {
               Custom Fields
             </TabsTrigger>
           )}
-          <TabsTrigger
-            value="deals"
-            className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
-          >
-            <Coins className="size-4" />
-            Deals
-          </TabsTrigger>
+          {canEditSettings && (
+            <TabsTrigger
+              value="deals"
+              className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
+            >
+              <Coins className="size-4" />
+              Deals
+            </TabsTrigger>
+          )}
           <TabsTrigger
             value="appearance"
             className="data-active:text-primary text-slate-400 data-active:bg-slate-800"
@@ -144,17 +200,41 @@ export default function SettingsPage() {
           <SessionsCard />
         </TabsContent>
 
-        <TabsContent value="whatsapp">
-          <WhatsAppConfig />
-        </TabsContent>
+        {canEditSettings && (
+          <TabsContent value="whatsapp">
+            <WhatsAppConfig />
+          </TabsContent>
+        )}
 
-        <TabsContent value="templates">
-          <TemplateManager />
-        </TabsContent>
+        {canEditSettings && (
+          <TabsContent value="instagram">
+            <InstagramConfig />
+          </TabsContent>
+        )}
 
-        <TabsContent value="tags">
-          <TagManager />
-        </TabsContent>
+        {canEditSettings && (
+          <TabsContent value="templates">
+            <TemplateManager />
+          </TabsContent>
+        )}
+
+        {canEditSettings && (
+          <TabsContent value="tags">
+            <TagManager />
+          </TabsContent>
+        )}
+
+        {canEditSettings && (
+          <TabsContent value="site-intake">
+            <LeadIntakeTokens />
+          </TabsContent>
+        )}
+
+        {canEditSettings && (
+          <TabsContent value="hotmart">
+            <HotmartConfig />
+          </TabsContent>
+        )}
 
         {canEditSettings && (
           <TabsContent value="custom-fields">
@@ -162,9 +242,11 @@ export default function SettingsPage() {
           </TabsContent>
         )}
 
-        <TabsContent value="deals">
-          <DealsSettings />
-        </TabsContent>
+        {canEditSettings && (
+          <TabsContent value="deals">
+            <DealsSettings />
+          </TabsContent>
+        )}
 
         <TabsContent value="appearance">
           <AppearancePanel />

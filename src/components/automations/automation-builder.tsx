@@ -1072,7 +1072,7 @@ function StepEditor({
               onChange={(e) => set({ mode: e.target.value })}
               className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white"
             >
-              <option value="round_robin">Round-robin</option>
+              <option value="round_robin">Send to lead pool (unassign)</option>
               <option value="specific">Specific agent</option>
             </select>
           </FieldBlock>
@@ -1083,6 +1083,12 @@ function StepEditor({
                 onChange={(v) => set({ agent_id: v })}
               />
             </FieldBlock>
+          )}
+          {cfg.mode === "round_robin" && (
+            <p className="text-xs text-slate-500">
+              Clears the lead&apos;s owner so any teammate can claim it from
+              the contacts pool.
+            </p>
           )}
         </>
       )

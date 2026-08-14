@@ -150,10 +150,12 @@ export async function POST() {
       )
     }
 
+    // 034: templates are synced from the account's primary WABA.
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
       .eq('account_id', accountId)
+      .eq('is_primary', true)
       .single()
 
     if (configError || !config) {

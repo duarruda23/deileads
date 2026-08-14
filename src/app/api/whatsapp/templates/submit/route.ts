@@ -150,10 +150,12 @@ export async function POST(request: Request) {
       metaTemplateId = `dry-run-${crypto.randomUUID()}`
       metaStatus = 'PENDING'
     } else {
+      // 034: templates are submitted against the account's primary WABA.
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)
+        .eq('is_primary', true)
         .single()
       if (configError || !config) {
         return NextResponse.json(

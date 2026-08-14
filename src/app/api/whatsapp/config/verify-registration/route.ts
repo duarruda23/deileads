@@ -28,7 +28,7 @@ import {
  * rather than a generic error toast. The combined `live` flag is
  * what the UI badges on.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const supabase = await createClient()
   const {
     data: { user },
@@ -38,12 +38,12 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // whatsapp_config is one-row-per-account post-017. Resolve the
-  // caller's account_id so a teammate who joined an existing account
-  // sees the same registration state as the admin who set it up.
+  // 034: whatsapp_config is one-row-per-vendor. Defaults to the
+  // caller's own connection; admin+ may pass `?userId=` to diagnose
+  // a teammate's instead.
   const { data: profile } = await supabase
     .from('profiles')
-    .select('account_id')
+    .select('account_id, account_role')
     .eq('user_id', user.id)
     .maybeSingle()
   const accountId = profile?.account_id as string | undefined
@@ -54,11 +54,16 @@ export async function GET() {
       message: 'Your profile is not linked to an account.',
     })
   }
+  const isAdmin = profile?.account_role === 'owner' || profile?.account_role === 'admin'
+  const { searchParams } = new URL(request.url)
+  const requestedUserId = searchParams.get('userId')
+  const targetUserId = isAdmin && requestedUserId ? requestedUserId : user.id
 
   const { data: config } = await supabase
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', accountId)
+    .eq('user_id', targetUserId)
     .maybeSingle()
 
   if (!config) {

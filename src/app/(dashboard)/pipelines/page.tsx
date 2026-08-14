@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useDocumentTitle } from "@/hooks/use-document-title";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
@@ -45,6 +46,7 @@ const SPEC_DEFAULT_STAGES = [
 ];
 
 export default function PipelinesPage() {
+  useDocumentTitle("Pipelines");
   const supabase = createClient();
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");
@@ -67,9 +69,6 @@ export default function PipelinesPage() {
   const [dealFormOpen, setDealFormOpen] = useState(false);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [defaultStageId, setDefaultStageId] = useState<string>("");
-
-  // Guard against double-seeding (React StrictMode double-effect in dev).
-  const seedAttempted = useRef(false);
 
   const loadPipelines = useCallback(async () => {
     const { data, error } = await supabase
@@ -107,49 +106,22 @@ export default function PipelinesPage() {
     [supabase],
   );
 
-  const seedDefaultPipeline = useCallback(async (): Promise<Pipeline | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-    if (!user) return null;
-    // pipelines.account_id is NOT NULL post-017 with no DB default.
-    if (!accountId) return null;
-
-    const { data: pipeline, error } = await supabase
-      .from("pipelines")
-      .insert({ user_id: user.id, account_id: accountId, name: "Sales Pipeline" })
-      .select()
-      .single();
-
-    if (error || !pipeline) {
-      console.error("Failed to seed pipeline:", error?.message);
-      return null;
-    }
-
-    const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
-      pipeline_id: pipeline.id,
-      name: s.name,
-      color: s.color,
-      position: s.position,
-    }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
-
-    return pipeline as Pipeline;
-  }, [supabase, accountId]);
-
-  // Initial load + seed-if-empty
+  // Initial load. Deliberately does NOT auto-create a pipeline when
+  // the account has none — it used to, silently, on every page visit
+  // to a zero-pipeline account. That raced with a user who opened
+  // "Add Pipeline" and typed their own name in the same moment: both
+  // inserts landed, leaving an unwanted extra "Sales Pipeline" next
+  // to the one the user actually asked for. Real client accounts are
+  // seeded a default pipeline once, at account creation
+  // (admin_create_account RPC, 030) — this effect only ever sees zero
+  // pipelines for a pre-multi-tenant personal/legacy account, which
+  // is exactly the empty state below that lets the user create their
+  // first pipeline deliberately, under a name they chose.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      let list = await loadPipelines();
-
-      if (list.length === 0 && !seedAttempted.current) {
-        seedAttempted.current = true;
-        const seeded = await seedDefaultPipeline();
-        if (seeded) list = await loadPipelines();
-      }
+      const list = await loadPipelines();
 
       if (cancelled) return;
       setPipelines(list);
@@ -165,7 +137,7 @@ export default function PipelinesPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadPipelines, seedDefaultPipeline]);
+  }, [loadPipelines]);
 
   // Load stages + deals whenever selected pipeline changes.
   // Clearing on no-selection is a legitimate sync with URL/prop

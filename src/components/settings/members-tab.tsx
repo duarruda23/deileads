@@ -60,6 +60,7 @@ import { RequireRole } from '@/components/auth/require-role';
 import { useAuth } from '@/hooks/use-auth';
 import type { AccountRole } from '@/lib/auth/roles';
 import { InviteMemberDialog } from './invite-member-dialog';
+import { LeadVisibilityGrantsPanel } from './lead-visibility-grants-panel';
 
 interface Member {
   user_id: string;
@@ -530,6 +531,16 @@ export function MembersTab() {
             </Card>
           )}
         </div>
+      </RequireRole>
+
+      {/* 034/035: who can see whose leads — admin-only, lives next
+          to the roster rather than as its own settings tab since
+          it's conceptually "member permissions," same bucket as
+          roles above. */}
+      <RequireRole min="admin">
+        <LeadVisibilityGrantsPanel
+          members={members.map((m) => ({ user_id: m.user_id, full_name: m.full_name }))}
+        />
       </RequireRole>
 
       <InviteMemberDialog

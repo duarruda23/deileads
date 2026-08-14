@@ -96,6 +96,17 @@ export function InviteMemberDialog({
     setSubmitting(false);
   }
 
+  // Shared by the "Done" button and every other way of closing this
+  // dialog (Esc, overlay click, the built-in X). Previously "Done"
+  // called `onOpenChange(false)` directly — the parent prop, not the
+  // `<Dialog onOpenChange>` wrapper below that calls `reset()` — so
+  // reopening the dialog right after redisplayed the stale success
+  // screen with the previous invite's link instead of a fresh form.
+  function handleClose() {
+    reset();
+    onOpenChange(false);
+  }
+
   async function handleCreate() {
     // Mirror the server's max-length check so we don't ship an
     // obviously-too-long label across the wire just to bounce off
@@ -260,7 +271,7 @@ export function InviteMemberDialog({
 
             <DialogFooter className="bg-slate-900 border-slate-700">
               <Button
-                onClick={() => onOpenChange(false)}
+                onClick={handleClose}
                 className="bg-primary hover:bg-primary/90 text-primary-foreground"
               >
                 Done

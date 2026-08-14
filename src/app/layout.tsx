@@ -85,7 +85,16 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
         />
       </head>
-      <body className="min-h-full bg-background text-foreground font-sans">
+      <body
+        className="min-h-full bg-background text-foreground font-sans"
+        // Browser extensions (e.g. ColorZilla) inject attributes like
+        // `cz-shortcut-listen` into <body> before React hydrates. That's
+        // a real DOM difference from the server-rendered HTML, but it's
+        // not something our code caused or can prevent — suppress just
+        // this element's attribute-mismatch warning rather than the
+        // whole tree.
+        suppressHydrationWarning
+      >
         <ThemeProvider>
           {children}
           <Toaster

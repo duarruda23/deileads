@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useDocumentTitle } from '@/hooks/use-document-title';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -56,6 +57,7 @@ interface ContactWithTags extends Contact {
 }
 
 export default function ContactsPage() {
+  useDocumentTitle('Contacts');
   const supabase = createClient();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
@@ -65,6 +67,10 @@ export default function ContactsPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  const [poolOnly, setPoolOnly] = useState(false);
+  const [poolCount, setPoolCount] = useState(0);
+  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [ownersMap, setOwnersMap] = useState<Record<string, string>>({});
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -90,6 +96,28 @@ export default function ContactsPage() {
     }
   }, [supabase]);
 
+  // 034: contacts.owner_id is a profiles.id — resolve names for
+  // display. Any account member can read other profiles (RLS,
+  // 023_platform_layer.sql).
+  const fetchOwners = useCallback(async () => {
+    const { data } = await supabase.from('profiles').select('id, full_name');
+    if (data) {
+      const map: Record<string, string> = {};
+      data.forEach((p) => (map[p.id] = p.full_name || 'Unnamed'));
+      setOwnersMap(map);
+    }
+  }, [supabase]);
+
+  // Caça-leads: count of unowned contacts, shown as a badge on the
+  // pool filter toggle regardless of whether it's currently active.
+  const fetchPoolCount = useCallback(async () => {
+    const { count } = await supabase
+      .from('contacts')
+      .select('id', { count: 'exact', head: true })
+      .is('owner_id', null);
+    setPoolCount(count ?? 0);
+  }, [supabase]);
+
   const fetchContacts = useCallback(async () => {
     setLoading(true);
 
@@ -105,6 +133,10 @@ export default function ContactsPage() {
     if (search.trim()) {
       const term = `%${search.trim()}%`;
       query = query.or(`name.ilike.${term},phone.ilike.${term},email.ilike.${term}`);
+    }
+
+    if (poolOnly) {
+      query = query.is('owner_id', null);
     }
 
     const { data, count, error } = await query;
@@ -145,7 +177,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, tagsMap]);
+  }, [supabase, page, search, poolOnly, tagsMap]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -154,12 +186,38 @@ export default function ContactsPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTags();
-  }, [fetchTags]);
+    fetchOwners();
+    fetchPoolCount();
+  }, [fetchTags, fetchOwners, fetchPoolCount]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContacts();
   }, [fetchContacts]);
+
+  async function claimContact(contactId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setClaimingId(contactId);
+    try {
+      const res = await fetch(`/api/contacts/${contactId}/claim`, { method: 'POST' });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        toast.error(payload.error || 'Failed to claim lead');
+        if (res.status === 409) {
+          fetchContacts();
+          fetchPoolCount();
+        }
+        return;
+      }
+      toast.success('Lead claimed');
+      fetchContacts();
+      fetchPoolCount();
+    } catch {
+      toast.error('Could not reach the server');
+    } finally {
+      setClaimingId(null);
+    }
+  }
 
   function openAddForm() {
     setEditContact(null);
@@ -233,6 +291,21 @@ export default function ContactsPage() {
               Custom fields
             </Button>
           )}
+          <Button
+            variant={poolOnly ? 'default' : 'outline'}
+            onClick={() => {
+              setPoolOnly((v) => !v);
+              setPage(0);
+            }}
+            className={
+              poolOnly
+                ? 'bg-amber-500 hover:bg-amber-500/90 text-slate-900'
+                : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+            }
+          >
+            <Users className="size-4" />
+            Lead pool{poolCount > 0 ? ` (${poolCount})` : ''}
+          </Button>
           <GatedButton
             variant="outline"
             canAct={canEdit}
@@ -281,6 +354,7 @@ export default function ContactsPage() {
               <TableHead className="text-slate-400 hidden md:table-cell">Email</TableHead>
               <TableHead className="text-slate-400 hidden lg:table-cell">Company</TableHead>
               <TableHead className="text-slate-400 hidden md:table-cell">Tags</TableHead>
+              <TableHead className="text-slate-400 hidden lg:table-cell">Owner</TableHead>
               <TableHead className="text-slate-400 hidden lg:table-cell">Created</TableHead>
               <TableHead className="text-slate-400 w-12" />
             </TableRow>
@@ -288,7 +362,7 @@ export default function ContactsPage() {
           <TableBody>
             {loading ? (
               <TableRow className="border-slate-800">
-                <TableCell colSpan={7} className="text-center py-12">
+                <TableCell colSpan={8} className="text-center py-12">
                   <div className="flex flex-col items-center gap-2">
                     <Loader2 className="size-6 animate-spin text-primary" />
                     <p className="text-sm text-slate-500">Loading contacts...</p>
@@ -297,7 +371,7 @@ export default function ContactsPage() {
               </TableRow>
             ) : contacts.length === 0 ? (
               <TableRow className="border-slate-800">
-                <TableCell colSpan={7} className="text-center py-12">
+                <TableCell colSpan={8} className="text-center py-12">
                   <div className="flex flex-col items-center gap-2">
                     <Users className="size-8 text-slate-600" />
                     <p className="text-sm text-slate-500">
@@ -360,6 +434,32 @@ export default function ContactsPage() {
                         </span>
                       )}
                     </div>
+                  </TableCell>
+                  <TableCell className="hidden lg:table-cell text-sm">
+                    {contact.owner_id ? (
+                      <span className="text-slate-300">
+                        {ownersMap[contact.owner_id] || 'Unknown'}
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-amber-400 text-xs">Unclaimed</span>
+                        {canEdit && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => claimContact(contact.id, e)}
+                            disabled={claimingId === contact.id}
+                            className="h-6 px-2 text-[11px] border-primary/40 text-primary hover:bg-primary/10"
+                          >
+                            {claimingId === contact.id ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : (
+                              'Claim'
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="text-slate-500 text-xs hidden lg:table-cell">
                     {new Date(contact.created_at).toLocaleDateString('en-US', {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { useDocumentTitle } from '@/hooks/use-document-title';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -57,6 +58,7 @@ function RateCell({
 }
 
 export default function BroadcastsPage() {
+  useDocumentTitle('Broadcasts');
   const router = useRouter();
   const canCreate = useCan('send-messages');
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);

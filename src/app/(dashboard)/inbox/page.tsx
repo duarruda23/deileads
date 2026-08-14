@@ -11,8 +11,10 @@ import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDocumentTitle } from "@/hooks/use-document-title";
 
 export default function InboxPage() {
+  useDocumentTitle("Inbox");
   const router = useRouter();
   const searchParams = useSearchParams();
   /**
@@ -149,13 +151,16 @@ export default function InboxPage() {
         return;
       }
 
+      // 034: whatsapp_config is one-row-per-vendor now, so an account
+      // can have several. The banner just needs "is *anything*
+      // connected" — .maybeSingle() would throw once a second vendor
+      // connects their own number.
       const { data } = await supabase
         .from("whatsapp_config")
         .select("status")
-        .eq("account_id", accountId)
-        .maybeSingle();
+        .eq("account_id", accountId);
 
-      setWhatsappConnected(data?.status === "connected");
+      setWhatsappConnected(!!data?.some((row) => row.status === "connected"));
     };
 
     checkConnection();

@@ -15,6 +15,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { resolveWhatsappConfigForOwner } from '@/lib/whatsapp/resolve-config'
 
 // ------------------------------------------------------------
 // Flows-side Meta sender (interactive variants).
@@ -64,7 +65,7 @@ export async function engineSendText(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, owner_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
@@ -77,12 +78,10 @@ export async function engineSendText(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
-  if (configErr || !config) {
+  // 034: reply from the number this contact's vendor owns; falls
+  // back to the account's primary number for unowned/legacy contacts.
+  const config = await resolveWhatsappConfigForOwner(db, args.accountId, contact.owner_id ?? null)
+  if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
 
@@ -173,7 +172,7 @@ export async function engineSendMedia(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, owner_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
@@ -186,12 +185,10 @@ export async function engineSendMedia(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
-  if (configErr || !config) {
+  // 034: reply from the number this contact's vendor owns; falls
+  // back to the account's primary number for unowned/legacy contacts.
+  const config = await resolveWhatsappConfigForOwner(db, args.accountId, contact.owner_id ?? null)
+  if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
 
@@ -325,7 +322,7 @@ async function sendInteractiveViaMeta(
   // Migration 017 moved both tables to account-scoped tenancy.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, owner_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
@@ -338,12 +335,10 @@ async function sendInteractiveViaMeta(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
+  // 034: reply from the number this contact's vendor owns; falls
+  // back to the account's primary number for unowned/legacy contacts.
+  const config = await resolveWhatsappConfigForOwner(db, input.accountId, contact.owner_id ?? null)
+  if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
 

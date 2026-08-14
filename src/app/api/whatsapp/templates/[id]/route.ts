@@ -139,10 +139,13 @@ export async function PATCH(
     const metaPayload = buildMetaTemplatePayload(payload)
 
     if (!isDryRun()) {
+      // 034: templates are approved against one WABA — always the
+      // account's primary number, never fragmented per vendor.
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)
+        .eq('is_primary', true)
         .single()
       if (configError || !config) {
         return NextResponse.json(
@@ -266,10 +269,12 @@ export async function DELETE(
     }
 
     if (existing.meta_template_id && !isDryRun()) {
+      // 034: templates live on the account's primary WABA.
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)
+        .eq('is_primary', true)
         .single()
       if (configError || !config || !config.waba_id) {
         return NextResponse.json(

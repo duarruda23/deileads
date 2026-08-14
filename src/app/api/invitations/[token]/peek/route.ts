@@ -69,8 +69,9 @@ export async function GET(
   }
 
   const supabase = await createClient();
+  const tokenHash = hashInviteToken(token);
   const { data, error } = await supabase.rpc("peek_invitation", {
-    p_token_hash: hashInviteToken(token),
+    p_token_hash: tokenHash,
   });
 
   if (error) {
@@ -79,6 +80,21 @@ export async function GET(
       { ok: false, reason: "server_error" },
       { status: 500 },
     );
+  }
+
+  // account_invitations and platform_invitations draw tokens from
+  // the same generator but are independent tables, so a token
+  // belongs to at most one of them. Only fall through to the
+  // platform table on a clean "not_found" — "used"/"expired" are
+  // conclusive answers about the account-invitation row itself.
+  if (!data.ok && data.reason === "not_found") {
+    const { data: platformData, error: platformErr } = await supabase.rpc(
+      "peek_platform_invitation",
+      { p_token_hash: tokenHash },
+    );
+    if (!platformErr && platformData) {
+      return NextResponse.json(platformData);
+    }
   }
 
   // The RPC always returns a json object — either ok:true with

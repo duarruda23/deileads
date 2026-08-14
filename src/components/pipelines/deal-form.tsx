@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
 import { CURRENCIES } from "@/lib/currency";
 import type {
   Contact,
@@ -20,6 +21,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { GatedButton } from "@/components/ui/gated-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -53,7 +55,13 @@ export function DealForm({
   onSaved,
 }: DealFormProps) {
   const supabase = createClient();
-  const { accountId, defaultCurrency } = useAuth();
+  const { accountId, defaultCurrency, profile } = useAuth();
+  // Defense in depth: the two entry points into this sheet (top-bar
+  // and per-column "Add Deal") are already gated, but gate the submit
+  // itself too so a viewer who reaches this form some other way (e.g.
+  // a future entry point) gets a disabled button + tooltip instead of
+  // a write that RLS silently drops.
+  const canEdit = useCan("send-messages");
 
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
@@ -98,11 +106,14 @@ export function DealForm({
       setCurrency(defaultCurrency);
       setContactId("");
       setStageId(defaultStageId || stages[0]?.id || "");
-      setAssignedTo("");
+      // 034: default a new deal's owner to whoever's creating it —
+      // matches contact-form.tsx's owner_id default. Still a plain
+      // dropdown, so anyone with edit rights can reassign it.
+      setAssignedTo(profile?.id ?? "");
       setExpectedCloseDate("");
       setNotes("");
     }
-  }, [open, deal, defaultStageId, stages, defaultCurrency]);
+  }, [open, deal, defaultStageId, stages, defaultCurrency, profile?.id]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Load supporting data once the sheet is open
@@ -169,12 +180,18 @@ export function DealForm({
     };
 
     if (deal) {
-      const { error } = await supabase
+      const { data: updated, error } = await supabase
         .from("deals")
         .update(payload)
-        .eq("id", deal.id);
-      if (error) {
-        toast.error("Failed to save deal");
+        .eq("id", deal.id)
+        .select("id");
+      // A blocked-by-RLS write returns `error: null` with zero rows —
+      // without this check a viewer/agent editing a deal they can't
+      // actually write to would see a false "Deal updated" toast.
+      if (error || !updated || updated.length === 0) {
+        toast.error(
+          error ? "Failed to save deal" : "You don't have permission to edit this deal",
+        );
         setSaving(false);
         return;
       }
@@ -212,13 +229,16 @@ export function DealForm({
   async function handleStatusChange(status: DealStatus) {
     if (!deal) return;
     setStatusAction(status);
-    const { error } = await supabase
+    const { data: updated, error } = await supabase
       .from("deals")
       .update({ status })
-      .eq("id", deal.id);
+      .eq("id", deal.id)
+      .select("id");
     setStatusAction(null);
-    if (error) {
-      toast.error("Failed to update deal status");
+    if (error || !updated || updated.length === 0) {
+      toast.error(
+        error ? "Failed to update deal status" : "You don't have permission to update this deal",
+      );
       return;
     }
     toast.success(
@@ -435,13 +455,16 @@ export function DealForm({
               >
                 Cancel
               </Button>
-              <Button
+              <GatedButton
+                canAct={canEdit}
+                gateReason={deal ? "edit deals" : "create deals"}
                 onClick={handleSave}
                 disabled={saving || !title.trim() || !contactId || !stageId}
-                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                wrapperClassName="flex-1"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 {saving ? "Saving..." : deal ? "Save Changes" : "Create Deal"}
-              </Button>
+              </GatedButton>
             </div>
 
             {deal &&

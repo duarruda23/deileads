@@ -9,25 +9,37 @@
 //        `profiles` (both reference `auth.users` independently), so
 //        this does two queries and merges in TS rather than fighting
 //        PostgREST's embed syntax for a relationship that doesn't
-//        exist at the DB level.
-// POST — creates the account AND invites its first Cliente Admin in
-//        one call. Two privileged operations chained:
-//          1. supabase.auth.admin.inviteUserByEmail — creates the
-//             auth.users row (fires handle_new_user, giving them a
-//             throwaway personal account) and emails them a set-
-//             password link.
-//          2. admin_create_account RPC (030) — moves that profile
-//             into a freshly-created client account as 'owner',
-//             deletes the orphan personal account, seeds a default
-//             pipeline so the account works immediately.
-//        If step 2 fails after step 1 succeeded, the invited user is
-//        left with just their personal account rather than silently
-//        vanishing — logged loudly so it's not a mystery to debug.
+//        exist at the DB level. Also returns `pendingInvitations` —
+//        `platform_invitations` (kind='new_account') rows that
+//        haven't been redeemed yet, so the admin can see, resend, or
+//        cancel a link that hasn't been claimed (see
+//        /api/admin/accounts/invitations/[id]).
+// POST — creates a `platform_invitations` row (kind='new_account')
+//        and returns a shareable `/join/<token>` link, same shape as
+//        `/api/account/invitations`. The admin copies/sends it
+//        themselves (WhatsApp, etc). The account itself doesn't
+//        exist yet — it's created at redeem time by
+//        `redeem_platform_invitation` (032), once someone actually
+//        holds the link and sets their own password.
+//
+//        Previously this called `supabase.auth.admin.inviteUserByEmail`
+//        to create the user immediately and have Supabase email them
+//        a set-password link. That depends on outbound email, which
+//        isn't configured for this project — invites were created
+//        but the email never arrived, leaving the invitee stuck on
+//        the plain login screen with no way in. See
+//        032_platform_invitations.sql for the full writeup.
 // ============================================================
 
 import { NextResponse } from "next/server";
 
 import { toErrorResponse } from "@/lib/auth/account";
+import {
+  generateInviteToken,
+  getBaseUrl,
+  inviteExpiresAt,
+  inviteUrl,
+} from "@/lib/auth/invitations";
 import { requirePlatformAdmin } from "@/lib/auth/platform";
 import { supabaseAdmin } from "@/lib/platform/admin-client";
 import { createClient } from "@/lib/supabase/server";
@@ -59,11 +71,27 @@ export async function GET() {
 
     const ownerById = new Map((owners ?? []).map((o) => [o.user_id, o]));
 
+    const { data: pendingInvitations, error: pendingErr } = await supabase
+      .from("platform_invitations")
+      .select("id, account_name, label, created_at, expires_at")
+      .eq("kind", "new_account")
+      .is("accepted_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false });
+
+    if (pendingErr) {
+      console.error(
+        "[GET /api/admin/accounts] pending invitations fetch error:",
+        pendingErr,
+      );
+    }
+
     return NextResponse.json({
       accounts: accounts.map((a) => ({
         ...a,
         owner: ownerById.get(a.owner_user_id) ?? null,
       })),
+      pendingInvitations: pendingInvitations ?? [],
     });
   } catch (err) {
     return toErrorResponse(err);
@@ -72,53 +100,40 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    await requirePlatformAdmin();
+    const { userId } = await requirePlatformAdmin();
 
-    const { accountName, ownerEmail } = await request.json();
+    const { accountName } = await request.json();
     if (!accountName || typeof accountName !== "string") {
       return NextResponse.json(
         { error: "accountName is required" },
         { status: 400 },
       );
     }
-    if (!ownerEmail || typeof ownerEmail !== "string") {
-      return NextResponse.json(
-        { error: "ownerEmail is required" },
-        { status: 400 },
-      );
-    }
+
+    const { token, hash } = generateInviteToken();
+    const expiresAt = inviteExpiresAt(undefined); // default 7 days
 
     const admin = supabaseAdmin();
+    const { error } = await admin.from("platform_invitations").insert({
+      kind: "new_account",
+      account_name: accountName,
+      token_hash: hash,
+      created_by_user_id: userId,
+      expires_at: expiresAt.toISOString(),
+    });
 
-    const { data: invited, error: inviteErr } =
-      await admin.auth.admin.inviteUserByEmail(ownerEmail);
-    if (inviteErr || !invited.user) {
-      console.error("[POST /api/admin/accounts] invite error:", inviteErr);
+    if (error) {
+      console.error("[POST /api/admin/accounts] insert error:", error);
       return NextResponse.json(
-        { error: inviteErr?.message ?? "Failed to invite the account owner" },
-        { status: 400 },
-      );
-    }
-
-    const { data: accountId, error: rpcErr } = await admin.rpc(
-      "admin_create_account",
-      { p_account_name: accountName, p_owner_user_id: invited.user.id },
-    );
-
-    if (rpcErr) {
-      console.error(
-        "[POST /api/admin/accounts] admin_create_account failed AFTER inviting",
-        invited.user.id,
-        "— that user now has only a personal account:",
-        rpcErr,
-      );
-      return NextResponse.json(
-        { error: "Owner was invited but account setup failed — check server logs" },
+        { error: "Failed to create invitation" },
         { status: 500 },
       );
     }
 
-    return NextResponse.json({ ok: true, accountId }, { status: 201 });
+    return NextResponse.json(
+      { ok: true, url: inviteUrl(token, getBaseUrl(request)), expiresInDays: 7 },
+      { status: 201 },
+    );
   } catch (err) {
     return toErrorResponse(err);
   }

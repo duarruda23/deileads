@@ -9,8 +9,8 @@ import {
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 
 /**
- * Resolve the caller's account_id from their profile. Inlined here
- * (rather than going through `@/lib/auth/account.getCurrentAccount`)
+ * Resolve the caller's account_id + account_role from their profile.
+ * Inlined here (rather than going through `@/lib/auth/account.getCurrentAccount`)
  * because the GET handler wants to return shaped 200s for every
  * non-auth failure mode, not throw — keeping the helper minimal lets
  * the existing response branches stay as-is.
@@ -18,23 +18,53 @@ import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
  * Returns null if the user has no profile or no account; callers
  * should treat that the same as "not connected".
  */
-async function resolveAccountId(
+async function resolveCaller(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
-): Promise<string | null> {
+): Promise<{ accountId: string; isAdmin: boolean } | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('account_id')
+    .select('account_id, account_role')
     .eq('user_id', userId)
     .maybeSingle()
   if (error || !data?.account_id) return null
-  return data.account_id as string
+  return {
+    accountId: data.account_id as string,
+    isAdmin: data.account_role === 'owner' || data.account_role === 'admin',
+  }
+}
+
+/**
+ * 034: whatsapp_config moved from one-row-per-account to one-row-
+ * per-vendor (UNIQUE(account_id, user_id)). Every handler below now
+ * resolves a *target* user_id — the caller's own by default, or
+ * another account member's if the caller is admin+ and passes one
+ * explicitly (`?userId=` on GET/DELETE, `user_id` in the POST body).
+ * A non-admin who tries to target someone else silently falls back
+ * to their own row rather than erroring — same "fail to your own
+ * scope" posture as the rest of the 034 access model.
+ */
+async function resolveTargetUserId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  accountId: string,
+  callerId: string,
+  isAdmin: boolean,
+  requestedUserId: string | null,
+): Promise<string> {
+  if (!isAdmin || !requestedUserId || requestedUserId === callerId) return callerId
+  const { data } = await supabase
+    .from('profiles')
+    .select('user_id')
+    .eq('account_id', accountId)
+    .eq('user_id', requestedUserId)
+    .maybeSingle()
+  return data?.user_id ?? callerId
 }
 
 // Lazy-initialised service-role client. We need it to detect a
-// phone_number_id already claimed by a *different* user — under RLS,
-// the user's own session can't see other users' rows, so the conflict
-// would be invisible without the service role.
+// phone_number_id already claimed by a *different* account — under
+// RLS, the user's own session can't see other accounts' rows, so the
+// conflict would be invisible without the service role.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _adminClient: any = null
 function supabaseAdmin() {
@@ -48,11 +78,13 @@ function supabaseAdmin() {
 }
 
 /**
- * GET /api/whatsapp/config
+ * GET /api/whatsapp/config?userId=<optional>
  *
- * Used by the "Test API Connection" button and by the page to check
- * whether the saved config is healthy. Returns 200 in all non-auth cases
- * so the UI can render an appropriate message rather than show a 500.
+ * Used by the "Test API Connection" button and by the settings list
+ * to check whether one vendor's connection is healthy. Defaults to
+ * the caller's own row; admins may pass `?userId=` to check a
+ * teammate's. Returns 200 in all non-auth cases so the UI can render
+ * an appropriate message rather than show a 500.
  *
  * Response shape:
  *   { connected: true,  phone_info: {...} }
@@ -60,7 +92,7 @@ function supabaseAdmin() {
  *   { connected: false, reason: 'token_corrupted',  message: '...', needs_reset: true }
  *   { connected: false, reason: 'meta_api_error',   message: '...' }
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -73,8 +105,8 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
+    const caller = await resolveCaller(supabase, user.id)
+    if (!caller) {
       return NextResponse.json(
         {
           connected: false,
@@ -85,10 +117,20 @@ export async function GET() {
       )
     }
 
+    const { searchParams } = new URL(request.url)
+    const targetUserId = await resolveTargetUserId(
+      supabase,
+      caller.accountId,
+      user.id,
+      caller.isAdmin,
+      searchParams.get('userId'),
+    )
+
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('phone_number_id, access_token, status')
-      .eq('account_id', accountId)
+      .eq('account_id', caller.accountId)
+      .eq('user_id', targetUserId)
       .maybeSingle()
 
     if (configError) {
@@ -160,8 +202,11 @@ export async function GET() {
 /**
  * POST /api/whatsapp/config
  *
- * Saves or updates the WhatsApp config for the authenticated user.
- * Verifies credentials with Meta first, then encrypts and stores.
+ * Saves or updates one vendor's WhatsApp config. Body may include
+ * `user_id` to target a teammate's row — honored only for admin+
+ * callers (see resolveTargetUserId), otherwise ignored in favor of
+ * the caller's own id. Verifies credentials with Meta first, then
+ * encrypts and stores.
  */
 export async function POST(request: Request) {
   try {
@@ -176,16 +221,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
+    const caller = await resolveCaller(supabase, user.id)
+    if (!caller) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
         { status: 403 },
       )
     }
+    const accountId = caller.accountId
 
     const body = await request.json()
     const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const targetUserId = await resolveTargetUserId(
+      supabase,
+      accountId,
+      user.id,
+      caller.isAdmin,
+      typeof body.user_id === 'string' ? body.user_id : null,
+    )
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
@@ -204,12 +257,11 @@ export async function POST(request: Request) {
     }
 
     // Reject if another account has already claimed this phone_number_id.
-    // wacrm is single-tenant-per-WhatsApp-number — letting two accounts
-    // bind the same number causes the webhook's `.single()` lookup to
-    // throw PGRST116 ("multiple rows"), silently dropping every
-    // inbound message. See issue #136. Post-multi-user we key on
-    // account_id (not user_id) since teammates inside the same account
-    // all share one config; the conflict is between accounts.
+    // A single physical number can only ever back one whatsapp_config row
+    // globally (migration 013) — letting two accounts (or two vendors
+    // within different accounts) bind the same number causes the
+    // webhook's `.eq('phone_number_id', ...)` lookup to see >1 row and
+    // drop the message. See issue #136.
     const { data: claimed, error: claimedError } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('account_id')
@@ -231,6 +283,32 @@ export async function POST(request: Request) {
           error:
             'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one wacrm user.',
         },
+        { status: 409 }
+      )
+    }
+
+    // Same check, scoped to *this* account: another vendor on the same
+    // team already claimed this number. 034 allows multiple numbers
+    // per account, but never the same number twice.
+    const { data: claimedWithinAccount, error: withinAccountError } = await supabaseAdmin()
+      .from('whatsapp_config')
+      .select('user_id')
+      .eq('phone_number_id', phone_number_id)
+      .eq('account_id', accountId)
+      .neq('user_id', targetUserId)
+      .maybeSingle()
+
+    if (withinAccountError) {
+      console.error('Error checking phone_number_id ownership (same account):', withinAccountError)
+      return NextResponse.json(
+        { error: 'Failed to validate configuration' },
+        { status: 500 }
+      )
+    }
+
+    if (claimedWithinAccount) {
+      return NextResponse.json(
+        { error: 'This WhatsApp number is already connected to a different teammate on your account.' },
         { status: 409 }
       )
     }
@@ -269,13 +347,14 @@ export async function POST(request: Request) {
       )
     }
 
-    // Look up any pre-existing row for this account so we know whether
+    // Look up any pre-existing row for this vendor so we know whether
     // this number is already registered with Meta — if so we can skip
     // /register when the user didn't provide a PIN this time around.
     const { data: existing } = await supabase
       .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id')
+      .select('id, registered_at, phone_number_id, is_primary')
       .eq('account_id', accountId)
+      .eq('user_id', targetUserId)
       .maybeSingle()
 
     const sameNumber =
@@ -371,6 +450,7 @@ export async function POST(request: Request) {
         .from('whatsapp_config')
         .update(baseRow)
         .eq('account_id', accountId)
+        .eq('user_id', targetUserId)
 
       if (updateError) {
         console.error('Error updating whatsapp_config:', updateError)
@@ -380,15 +460,17 @@ export async function POST(request: Request) {
         )
       }
     } else {
-      // Insert with both columns: `account_id` is the tenancy key
-      // (NOT NULL post-017, UNIQUE so duplicates trip the constraint
-      // up-front), `user_id` is the audit column identifying which
-      // member of the account saved the config.
+      // First connection for this vendor. is_primary defaults false —
+      // an account's very first-ever connection is promoted to primary
+      // separately (see the primary-promotion block below), and every
+      // subsequent vendor connection stays non-primary until an admin
+      // explicitly changes it (PATCH, not implemented in this route —
+      // see the settings list UI).
       const { error: insertError } = await supabase
         .from('whatsapp_config')
         .insert({
           account_id: accountId,
-          user_id: user.id,
+          user_id: targetUserId,
           ...baseRow,
         })
 
@@ -398,6 +480,22 @@ export async function POST(request: Request) {
           { error: 'Failed to save configuration' },
           { status: 500 }
         )
+      }
+
+      // If this account has no primary yet (e.g. its only-ever row was
+      // just deleted, or this really is the first connection), make
+      // this one primary so broadcasts/templates have a number to use.
+      const { count: primaryCount } = await supabase
+        .from('whatsapp_config')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', accountId)
+        .eq('is_primary', true)
+      if (!primaryCount) {
+        await supabase
+          .from('whatsapp_config')
+          .update({ is_primary: true })
+          .eq('account_id', accountId)
+          .eq('user_id', targetUserId)
       }
     }
 
@@ -432,13 +530,15 @@ export async function POST(request: Request) {
 }
 
 /**
- * DELETE /api/whatsapp/config
+ * DELETE /api/whatsapp/config?userId=<optional>
  *
- * Removes the authenticated user's WhatsApp configuration row.
- * Used by the "Reset Configuration" button to recover from a corrupted
- * encrypted token (mismatched ENCRYPTION_KEY across environments).
+ * Removes one vendor's WhatsApp configuration row (default: the
+ * caller's own; admins may target `?userId=`). Used by the "Reset
+ * Configuration" button to recover from a corrupted encrypted token
+ * (mismatched ENCRYPTION_KEY across environments), or to disconnect
+ * a vendor who's leaving.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -451,18 +551,30 @@ export async function DELETE() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
+    const caller = await resolveCaller(supabase, user.id)
+    if (!caller) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
         { status: 403 },
       )
     }
 
-    const { error: deleteError } = await supabase
+    const { searchParams } = new URL(request.url)
+    const targetUserId = await resolveTargetUserId(
+      supabase,
+      caller.accountId,
+      user.id,
+      caller.isAdmin,
+      searchParams.get('userId'),
+    )
+
+    const { data: deletedRow, error: deleteError } = await supabase
       .from('whatsapp_config')
       .delete()
-      .eq('account_id', accountId)
+      .eq('account_id', caller.accountId)
+      .eq('user_id', targetUserId)
+      .select('is_primary')
+      .maybeSingle()
 
     if (deleteError) {
       console.error('Error deleting whatsapp_config:', deleteError)
@@ -472,9 +584,99 @@ export async function DELETE() {
       )
     }
 
+    // Deleting the primary number leaves broadcasts/templates with
+    // nothing to send from — promote whichever connection remains
+    // (oldest first) so the account isn't silently stuck.
+    if (deletedRow?.is_primary) {
+      const { data: next } = await supabase
+        .from('whatsapp_config')
+        .select('user_id')
+        .eq('account_id', caller.accountId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      if (next) {
+        await supabase
+          .from('whatsapp_config')
+          .update({ is_primary: true })
+          .eq('account_id', caller.accountId)
+          .eq('user_id', next.user_id)
+      }
+    }
+
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Error in WhatsApp config DELETE:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+/**
+ * PATCH /api/whatsapp/config
+ *
+ * Body: { user_id: string, is_primary: true }
+ *
+ * Admin+ only: designates which vendor's connection Broadcasts and
+ * Message Templates send from. Demotes whichever row currently holds
+ * `is_primary` first — the unique partial index (034) only allows one
+ * per account, so skipping the demotion would 409 on the promote.
+ */
+export async function PATCH(request: Request) {
+  try {
+    const supabase = await createClient()
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const caller = await resolveCaller(supabase, user.id)
+    if (!caller) {
+      return NextResponse.json(
+        { error: 'Your profile is not linked to an account.' },
+        { status: 403 },
+      )
+    }
+    if (!caller.isAdmin) {
+      return NextResponse.json(
+        { error: 'Only admins can change which number is primary.' },
+        { status: 403 },
+      )
+    }
+
+    const body = await request.json()
+    const { user_id, is_primary } = body
+    if (typeof user_id !== 'string' || is_primary !== true) {
+      return NextResponse.json(
+        { error: 'user_id and is_primary: true are required' },
+        { status: 400 },
+      )
+    }
+
+    await supabase
+      .from('whatsapp_config')
+      .update({ is_primary: false })
+      .eq('account_id', caller.accountId)
+      .eq('is_primary', true)
+
+    const { error: promoteError } = await supabase
+      .from('whatsapp_config')
+      .update({ is_primary: true })
+      .eq('account_id', caller.accountId)
+      .eq('user_id', user_id)
+
+    if (promoteError) {
+      console.error('Error promoting whatsapp_config to primary:', promoteError)
+      return NextResponse.json({ error: 'Failed to update primary connection' }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Error in WhatsApp config PATCH:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

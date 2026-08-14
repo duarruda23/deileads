@@ -9,14 +9,24 @@
 // GET  — every member of virgo-interno, if it's been bootstrapped
 //        yet (see POST — it may not exist until the first seller is
 //        added).
-// POST — invites a new seller by email and adds them via the
-//        admin_add_virgo_seller RPC (030), which bootstraps
-//        virgo-interno on first call.
+// POST — creates a `platform_invitations` row (kind='virgo_seller')
+//        and returns a shareable `/join/<token>` link. Redeeming it
+//        calls `admin_add_virgo_seller` (030) — which bootstraps
+//        virgo-interno on first call — via `redeem_platform_invitation`
+//        (032). No email involved: see 032_platform_invitations.sql
+//        and /api/admin/accounts for why this replaced
+//        `inviteUserByEmail`.
 // ============================================================
 
 import { NextResponse } from "next/server";
 
 import { toErrorResponse } from "@/lib/auth/account";
+import {
+  generateInviteToken,
+  getBaseUrl,
+  inviteExpiresAt,
+  inviteUrl,
+} from "@/lib/auth/invitations";
 import { requirePlatformAdmin } from "@/lib/auth/platform";
 import { supabaseAdmin } from "@/lib/platform/admin-client";
 import { createClient } from "@/lib/supabase/server";
@@ -60,42 +70,33 @@ export async function POST(request: Request) {
   try {
     const { userId: actingAdminId } = await requirePlatformAdmin();
 
-    const { email } = await request.json();
-    if (!email || typeof email !== "string") {
-      return NextResponse.json({ error: "email is required" }, { status: 400 });
-    }
+    const { token, hash } = generateInviteToken();
+    const expiresAt = inviteExpiresAt(undefined); // default 7 days
 
     const admin = supabaseAdmin();
+    const { error } = await admin.from("platform_invitations").insert({
+      kind: "virgo_seller",
+      token_hash: hash,
+      // Stored so `admin_add_virgo_seller`'s first-call bootstrap
+      // (which needs SOME Super Admin to own the freshly-created
+      // virgo-interno account) has someone to attribute it to even
+      // though the redeemer, not this admin, is the one calling it.
+      created_by_user_id: actingAdminId,
+      expires_at: expiresAt.toISOString(),
+    });
 
-    const { data: invited, error: inviteErr } =
-      await admin.auth.admin.inviteUserByEmail(email);
-    if (inviteErr || !invited.user) {
-      console.error("[POST /api/admin/platform-users] invite error:", inviteErr);
+    if (error) {
+      console.error("[POST /api/admin/platform-users] insert error:", error);
       return NextResponse.json(
-        { error: inviteErr?.message ?? "Failed to invite the seller" },
-        { status: 400 },
-      );
-    }
-
-    const { data: internalAccountId, error: rpcErr } = await admin.rpc(
-      "admin_add_virgo_seller",
-      { p_new_user_id: invited.user.id, p_acting_admin_user_id: actingAdminId },
-    );
-
-    if (rpcErr) {
-      console.error(
-        "[POST /api/admin/platform-users] admin_add_virgo_seller failed AFTER inviting",
-        invited.user.id,
-        ":",
-        rpcErr,
-      );
-      return NextResponse.json(
-        { error: "Seller was invited but could not be added to the internal account — check server logs" },
+        { error: "Failed to create invitation" },
         { status: 500 },
       );
     }
 
-    return NextResponse.json({ ok: true, accountId: internalAccountId }, { status: 201 });
+    return NextResponse.json(
+      { ok: true, url: inviteUrl(token, getBaseUrl(request)), expiresInDays: 7 },
+      { status: 201 },
+    );
   } catch (err) {
     return toErrorResponse(err);
   }

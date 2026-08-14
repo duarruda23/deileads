@@ -134,10 +134,13 @@ export async function POST(request: Request) {
       )
     }
 
+    // 034: broadcasts always fan out from the account's primary
+    // number, regardless of which vendor "owns" each recipient.
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
       .eq('account_id', accountId)
+      .eq('is_primary', true)
       .single()
 
     if (configError || !config) {

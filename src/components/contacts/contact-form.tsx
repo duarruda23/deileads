@@ -45,7 +45,7 @@ export function ContactForm({
   onViewExisting,
 }: ContactFormProps) {
   const supabase = createClient();
-  const { accountId } = useAuth();
+  const { accountId, profile, canManageMembers } = useAuth();
   const isEdit = !!contact;
 
   const [name, setName] = useState('');
@@ -67,6 +67,12 @@ export function ContactForm({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
 
+  // 034: only shown to admins, and only when creating (reassigning an
+  // existing contact is handled by the detail view's Owner field).
+  // Defaults to self, same as a non-admin's contact always was.
+  const [members, setMembers] = useState<{ id: string; full_name: string | null }[]>([]);
+  const [ownerId, setOwnerId] = useState('');
+
   useEffect(() => {
     if (open) {
       setName(contact?.name ?? '');
@@ -75,9 +81,25 @@ export function ContactForm({
       setCompany(contact?.company ?? '');
       setSelectedTagIds(contactTags.map((ct) => ct.tag_id));
       setDupMatch(null);
+      setOwnerId(profile?.id ?? '');
       fetchTags();
+      if (!isEdit && canManageMembers && accountId) fetchMembers();
     }
+    // Reset-on-open effect — intentionally keyed only on `open`/`contact`
+    // (matches the rest of this form); fetchTags/fetchMembers aren't
+    // memoized and including them would re-run this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contact]);
+
+  async function fetchMembers() {
+    if (!accountId) return;
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .eq('account_id', accountId)
+      .order('full_name');
+    if (data) setMembers(data);
+  }
 
   // Look up an existing contact with this number (new contacts only).
   // Runs on blur so we don't query on every keystroke.
@@ -147,7 +169,7 @@ export function ContactForm({
       let contactId = contact?.id;
 
       if (isEdit && contactId) {
-        const { error } = await supabase
+        const { data: updated, error } = await supabase
           .from('contacts')
           .update({
             name: name.trim() || null,
@@ -156,13 +178,27 @@ export function ContactForm({
             company: company.trim() || null,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', contactId);
+          .eq('id', contactId)
+          .select('id');
         if (error) throw error;
+        // A blocked-by-RLS write (viewer role, wrong account, etc.)
+        // returns `error: null` with zero rows affected — without
+        // `.select()` + this check, the code below would show a
+        // false "Contact updated" success toast on a write that
+        // never actually persisted.
+        if (!updated || updated.length === 0) {
+          throw new Error("You don't have permission to edit this contact");
+        }
       } else {
         const { data, error } = await supabase
           .from('contacts')
           .insert({
             user_id: user.id,
+            // 034: owner_id drives visibility (can_view_owner). A
+            // non-admin's manually-added lead belongs to whoever
+            // added it; an admin can instead leave it unassigned so
+            // it lands in the lead pool for any teammate to claim.
+            owner_id: canManageMembers ? (ownerId || null) : (profile?.id ?? null),
             account_id: accountId,
             name: name.trim() || null,
             phone: phone.trim(),
@@ -323,6 +359,27 @@ export function ContactForm({
               className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
             />
           </div>
+
+          {!isEdit && canManageMembers && (
+            <div className="space-y-2">
+              <Label htmlFor="cf-owner" className="text-slate-300">
+                Assign to
+              </Label>
+              <select
+                id="cf-owner"
+                value={ownerId}
+                onChange={(e) => setOwnerId(e.target.value)}
+                className="h-9 w-full rounded-md border border-slate-700 bg-slate-800 px-2.5 text-sm text-white outline-none focus:border-primary"
+              >
+                <option value="">Leave unclaimed (lead pool)</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.full_name || 'Unnamed'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label className="text-slate-300">Tags</Label>

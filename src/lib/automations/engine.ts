@@ -16,6 +16,7 @@ import type {
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { cascadeLeadOwner } from '@/lib/leads/assign-owner'
 
 // ------------------------------------------------------------
 // Public API
@@ -423,25 +424,39 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'assign_conversation': {
       const cfg = step.step_config as AssignConversationStepConfig
       if (!args.contactId) throw new Error('assign_conversation needs a contact')
-      let agentId = cfg.agent_id
-      if (cfg.mode === 'round_robin') {
-        // Pick any member of the account. The existing implementation
-        // only ever returned the automation's author; preserving that
-        // shape until a real round-robin algorithm replaces it.
-        const { data: profiles } = await db
+      const accountId = args.automation.account_id
+
+      // 034 turned assigned_agent_id/owner_id/assigned_to into real
+      // profiles.id FKs. cfg.agent_id (from AgentSelect) is a
+      // user_id (auth.users.id) — resolve it before writing, or the
+      // FK rejects it.
+      let profileId: string | null = null
+      if (cfg.mode === 'specific') {
+        if (!cfg.agent_id) return 'no agent configured'
+        const { data: profile } = await db
           .from('profiles')
-          .select('user_id')
-          .eq('account_id', args.automation.account_id)
-          .limit(1)
-        agentId = profiles?.[0]?.user_id
+          .select('id')
+          .eq('account_id', accountId)
+          .eq('user_id', cfg.agent_id)
+          .maybeSingle()
+        if (!profile) return 'configured agent not found in this account'
+        profileId = profile.id
       }
-      if (!agentId) return 'no agent resolved'
+      // 'round_robin' used to grab "the account's first profile" —
+      // not a real rotation, and it would now fail the FK above by
+      // writing a user_id into a profiles.id column. Real
+      // distribution is the caça-leads claim flow; this mode instead
+      // releases the lead back to the unclaimed pool so any agent
+      // can pick it up from there.
+
       await db
-        .from('conversations')
-        .update({ assigned_agent_id: agentId })
-        .eq('account_id', args.automation.account_id)
-        .eq('contact_id', args.contactId)
-      return `assigned to ${agentId}`
+        .from('contacts')
+        .update({ owner_id: profileId })
+        .eq('id', args.contactId)
+        .eq('account_id', accountId)
+      await cascadeLeadOwner(db, accountId, args.contactId, profileId)
+
+      return profileId ? `assigned to ${profileId}` : 'released to lead pool'
     }
 
     case 'update_contact_field': {

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useCan } from '@/hooks/use-can';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal } from '@/types';
@@ -15,6 +16,7 @@ import {
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { GatedButton } from '@/components/ui/gated-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -33,6 +35,7 @@ import {
   Save,
   X,
   DollarSign,
+  UserPlus,
 } from 'lucide-react';
 
 interface ContactDetailViewProps {
@@ -49,11 +52,27 @@ export function ContactDetailView({
   onUpdated,
 }: ContactDetailViewProps) {
   const supabase = createClient();
-  const { accountId, defaultCurrency } = useAuth();
+  const { accountId, defaultCurrency, canManageMembers } = useAuth();
+  // Viewers can open this sheet read-only. Gating the Save button
+  // (rather than relying on the update's error result) avoids the
+  // misleading "Contact updated" toast: an UPDATE a viewer isn't
+  // allowed to make matches zero rows under RLS and Postgrest
+  // returns 204 with no error, not a failure, so the old code path
+  // reported success on a write that never actually happened.
+  const canEdit = useCan('send-messages');
+
+  // 034/035: only admin+ reassigns leads between vendors — same tier
+  // as the lead-visibility-grants panel. Not an RLS boundary by
+  // itself (an owner could still edit their own row's owner_id if
+  // the field were exposed to them), just where this UI draws the
+  // line per the product decision that reassignment is admin-only.
+  const [members, setMembers] = useState<{ id: string; full_name: string | null }[]>([]);
+  const [editOwnerId, setEditOwnerId] = useState('');
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
+  const [claiming, setClaiming] = useState(false);
 
   // Details tab
   const [editName, setEditName] = useState('');
@@ -99,9 +118,24 @@ export function ContactDetailView({
       setEditPhone(data.phone);
       setEditEmail(data.email ?? '');
       setEditCompany(data.company ?? '');
+      setEditOwnerId(data.owner_id ?? '');
     }
     setLoading(false);
   }, [contactId, supabase]);
+
+  // 034: roster for the Owner reassignment select. Any account
+  // member can read other profiles in the same account (RLS,
+  // 023_platform_layer.sql), so this is a plain client-side query —
+  // only fetched for admins since only they see the field.
+  const fetchMembers = useCallback(async () => {
+    if (!accountId) return;
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .eq('account_id', accountId)
+      .order('full_name');
+    if (data) setMembers(data);
+  }, [accountId, supabase]);
 
   const fetchTags = useCallback(async () => {
     if (!contactId) return;
@@ -173,11 +207,12 @@ export function ContactDetailView({
       fetchNotes();
       fetchCustomFields();
       fetchDeals();
+      if (canManageMembers) fetchMembers();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals]);
+  }, [open, contactId, canManageMembers, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals, fetchMembers]);
 
   async function copyPhone() {
-    if (!contact) return;
+    if (!contact?.phone) return;
     await navigator.clipboard.writeText(contact.phone);
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
@@ -190,25 +225,78 @@ export function ContactDetailView({
     }
 
     setSavingDetails(true);
-    const { error } = await supabase
+    const ownerChanged = canManageMembers && (contact?.owner_id ?? '') !== editOwnerId;
+    const { data: updated, error } = await supabase
       .from('contacts')
       .update({
         name: editName.trim() || null,
         phone: editPhone.trim(),
         email: editEmail.trim() || null,
         company: editCompany.trim() || null,
+        // 034: only admins see/edit this field (see the Owner select
+        // below) — for everyone else editOwnerId just mirrors the
+        // loaded value, so this is a no-op write.
+        ...(canManageMembers ? { owner_id: editOwnerId || null } : {}),
         updated_at: new Date().toISOString(),
       })
-      .eq('id', contactId);
+      .eq('id', contactId)
+      .select('id');
 
-    if (error) {
-      toast.error('Failed to update contact');
-    } else {
-      toast.success('Contact updated');
+    // A blocked-by-RLS write returns `error: null` with zero rows
+    // affected — check for that explicitly so a viewer/agent editing
+    // a contact they can't actually write to doesn't get a false
+    // "Contact updated" success toast.
+    if (error || !updated || updated.length === 0) {
+      toast.error(
+        error ? 'Failed to update contact' : "You don't have permission to edit this contact",
+      );
+      setSavingDetails(false);
+      return;
+    }
+
+    // The owner changed: move the deal(s)/conversation along with it
+    // so the lead doesn't end up split across two vendors (one owning
+    // the contact/deal, another the conversation).
+    if (ownerChanged) {
+      const res = await fetch(`/api/contacts/${contactId}/reassign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ owner_id: editOwnerId || null }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        toast.error(payload.error || "Contact updated, but couldn't move its deal/conversation");
+      }
+    }
+
+    toast.success('Contact updated');
+    fetchContact();
+    onUpdated();
+    setSavingDetails(false);
+  }
+
+  async function claimLead() {
+    if (!contactId) return;
+    setClaiming(true);
+    try {
+      const res = await fetch(`/api/contacts/${contactId}/claim`, { method: 'POST' });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        toast.error(payload.error || 'Failed to claim lead');
+        if (res.status === 409) {
+          fetchContact();
+          onUpdated();
+        }
+        return;
+      }
+      toast.success('Lead claimed');
       fetchContact();
       onUpdated();
+    } catch {
+      toast.error('Could not reach the server');
+    } finally {
+      setClaiming(false);
     }
-    setSavingDetails(false);
   }
 
   async function toggleTag(tagId: string) {
@@ -384,6 +472,34 @@ export function ContactDetailView({
               </div>
             </SheetHeader>
 
+            {/* Caça-leads: this lead has no owner yet — any agent+
+                can claim it. Contacts land here unowned when they
+                come from CSV import, Instagram, a manually-added
+                contact left unassigned, or an automation's "send to
+                lead pool" step. */}
+            {!contact.owner_id && (
+              <div className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                <p className="text-xs text-amber-300">
+                  This lead hasn&apos;t been claimed yet.
+                </p>
+                <GatedButton
+                  canAct={canEdit}
+                  gateReason="claim leads"
+                  onClick={claimLead}
+                  disabled={claiming}
+                  size="sm"
+                  className="bg-amber-500 hover:bg-amber-500/90 text-slate-900 shrink-0"
+                >
+                  {claiming ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <UserPlus className="size-3.5" />
+                  )}
+                  Claim lead
+                </GatedButton>
+              </div>
+            )}
+
             {/* Tabs */}
             <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
               <TabsList className="bg-slate-800/50 border-b border-slate-700 mx-4 mt-3">
@@ -456,10 +572,33 @@ export function ContactDetailView({
                       className="bg-slate-800 border-slate-700 text-white h-8 text-sm"
                     />
                   </div>
-                  <Button
+                  {canManageMembers && (
+                    <div className="space-y-1.5">
+                      <Label className="text-slate-400 text-xs">Owner</Label>
+                      <select
+                        value={editOwnerId}
+                        onChange={(e) => setEditOwnerId(e.target.value)}
+                        className="h-8 w-full rounded-lg border border-slate-700 bg-slate-800 px-2.5 text-sm text-white outline-none focus:border-primary"
+                      >
+                        <option value="">Unassigned (visible to everyone)</option>
+                        {members.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.full_name || 'Unnamed'}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-500">
+                        Which vendor this lead belongs to. Only admins can change this.
+                      </p>
+                    </div>
+                  )}
+                  <GatedButton
+                    canAct={canEdit}
+                    gateReason="edit contacts"
                     onClick={saveDetails}
                     disabled={savingDetails}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                    wrapperClassName="w-full"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground"
                     size="sm"
                   >
                     {savingDetails ? (
@@ -468,7 +607,7 @@ export function ContactDetailView({
                       <Save className="size-3.5" />
                     )}
                     Save Changes
-                  </Button>
+                  </GatedButton>
                 </div>
               </TabsContent>
 

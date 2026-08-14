@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveWhatsappConfigForOwner } from '@/lib/whatsapp/resolve-config'
 
 export async function GET(
   request: Request,
@@ -48,14 +49,40 @@ export async function GET(
       )
     }
 
-    // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    // 034: this route only knows `mediaId`, not which conversation it
+    // belongs to — trace back through the message that referenced it
+    // (webhook ingestion stores media_url as this exact proxy path,
+    // see generateMediaProxyUrl in whatsapp/webhook/route.ts) to find
+    // the owning vendor, same as send/react do via their conversation.
+    // A miss (message not found, e.g. a stale/forged mediaId) falls
+    // through to the account's primary config rather than 400ing —
+    // this route only serves binary bytes for auth'd account members,
+    // so worst case is fetching from the "wrong" (but still valid)
+    // number.
+    const { data: mediaMessage } = await supabase
+      .from('messages')
+      .select('conversation:conversations(assigned_agent_id, contact:contacts(owner_id))')
+      .eq('media_url', `/api/whatsapp/media/${mediaId}`)
+      .maybeSingle()
 
-    if (configError || !config) {
+    const conv = mediaMessage?.conversation
+      ? Array.isArray(mediaMessage.conversation)
+        ? mediaMessage.conversation[0]
+        : mediaMessage.conversation
+      : null
+    const contactForMedia = conv?.contact
+      ? Array.isArray(conv.contact)
+        ? conv.contact[0]
+        : conv.contact
+      : null
+
+    const config = await resolveWhatsappConfigForOwner(
+      supabase,
+      accountId,
+      conv?.assigned_agent_id ?? contactForMedia?.owner_id ?? null,
+    )
+
+    if (!config) {
       return NextResponse.json(
         { error: 'WhatsApp not configured' },
         { status: 400 }

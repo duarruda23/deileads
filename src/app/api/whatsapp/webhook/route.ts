@@ -259,6 +259,23 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const config = configRows[0]
 
+      // 034: owner_id / assigned_to / assigned_agent_id are FKs to
+      // profiles(id), a different id space than whatsapp_config.user_id
+      // (auth.users.id) — resolve the matching profile row once per
+      // config match rather than per message. A miss (should only
+      // happen if the profile row was deleted out from under an
+      // existing config) degrades to NULL, which can_view_owner (034)
+      // treats as "visible to the whole account" — the same behavior
+      // every lead had before this feature existed — rather than
+      // silently failing the insert.
+      const { data: configOwnerProfile } = await supabaseAdmin()
+        .from('profiles')
+        .select('id')
+        .eq('user_id', config.user_id)
+        .eq('account_id', config.account_id)
+        .maybeSingle()
+      const configOwnerProfileId = configOwnerProfile?.id ?? null
+
       const decryptedAccessToken = decrypt(config.access_token)
 
       // CRM Virgo: this handler runs on the service-role client, which
@@ -298,6 +315,9 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           // inserts that need it for NOT NULL FK compliance. Always
           // the admin who saved the WhatsApp config.
           config.user_id,
+          // Access-control owner (034) — profiles.id of the vendor
+          // whose connected number received this message.
+          configOwnerProfileId,
           decryptedAccessToken,
           accountSuspended
         )
@@ -533,6 +553,10 @@ async function processMessage(
   // (contacts, conversations). Always the admin who saved the
   // WhatsApp config; the choice is arbitrary post-017 but stable.
   configOwnerUserId: string,
+  // Access-control owner (034) — profiles.id of the vendor whose
+  // connected number received this message. Null falls back to
+  // "visible to the whole account" (see can_view_owner, 034).
+  configOwnerProfileId: string | null,
   accessToken: string,
   // CRM Virgo: true when the owning account is suspended. Message
   // capture still happens either way — only automation/flow dispatch
@@ -546,6 +570,7 @@ async function processMessage(
   const contactOutcome = await findOrCreateContact(
     accountId,
     configOwnerUserId,
+    configOwnerProfileId,
     senderPhone,
     contactName
   )
@@ -556,6 +581,7 @@ async function processMessage(
   const conversation = await findOrCreateConversation(
     accountId,
     configOwnerUserId,
+    configOwnerProfileId,
     contactRecord.id
   )
   if (!conversation) return
@@ -576,6 +602,7 @@ async function processMessage(
   await findOrCreateDealForContact(
     accountId,
     configOwnerUserId,
+    configOwnerProfileId,
     contactRecord.id,
     conversation.id,
     contactName || senderPhone,
@@ -927,6 +954,7 @@ interface ContactOutcome {
 async function findOrCreateContact(
   accountId: string,
   configOwnerUserId: string,
+  configOwnerProfileId: string | null,
   phone: string,
   name: string
 ): Promise<ContactOutcome | null> {
@@ -956,12 +984,16 @@ async function findOrCreateContact(
   // Create new contact. account_id is the tenancy column;
   // user_id is the NOT NULL FK audit column (no inbound message
   // has a single "user who created" it — we attribute to the
-  // WhatsApp config owner as a stable default).
+  // WhatsApp config owner as a stable default). owner_id (034)
+  // is the actual access-control column: this inbound message
+  // arrived on this vendor's connected number, so that vendor
+  // owns the lead going forward.
   const { data: newContact, error: createError } = await supabaseAdmin()
     .from('contacts')
     .insert({
       account_id: accountId,
       user_id: configOwnerUserId,
+      owner_id: configOwnerProfileId,
       phone,
       name: name || phone,
     })
@@ -987,6 +1019,7 @@ async function findOrCreateContact(
 async function findOrCreateConversation(
   accountId: string,
   configOwnerUserId: string,
+  configOwnerProfileId: string | null,
   contactId: string,
 ) {
   // Look for existing conversation in this account
@@ -1002,12 +1035,14 @@ async function findOrCreateConversation(
   }
 
   // Create new conversation. Same tenancy + audit split as
-  // findOrCreateContact above.
+  // findOrCreateContact above; assigned_agent_id (034) is the
+  // access-control owner.
   const { data: newConv, error: createError } = await supabaseAdmin()
     .from('conversations')
     .insert({
       account_id: accountId,
       user_id: configOwnerUserId,
+      assigned_agent_id: configOwnerProfileId,
       contact_id: contactId,
     })
     .select()
@@ -1035,6 +1070,7 @@ async function findOrCreateConversation(
 async function findOrCreateDealForContact(
   accountId: string,
   configOwnerUserId: string,
+  configOwnerProfileId: string | null,
   contactId: string,
   conversationId: string,
   dealTitle: string,
@@ -1084,6 +1120,7 @@ async function findOrCreateDealForContact(
   const { error } = await supabaseAdmin().from('deals').insert({
     account_id: accountId,
     user_id: configOwnerUserId,
+    assigned_to: configOwnerProfileId,
     pipeline_id: pipeline.id,
     stage_id: stage.id,
     contact_id: contactId,

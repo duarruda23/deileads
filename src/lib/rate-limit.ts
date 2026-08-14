@@ -147,6 +147,15 @@ export const RATE_LIMITS = {
    *  anything past that on one IP is a script, not a person filling
    *  out a form. */
   siteLeadIntake: { limit: 10, windowMs: 60_000 },
+  /** Hotmart webhook (public, unauthenticated). Keyed by hottok hash,
+   *  NOT by IP — unlike siteLeadIntake, every account's Hotmart
+   *  traffic arrives through the same shared pool of Hotmart server
+   *  IPs at the same single global endpoint, so an IP-keyed limit
+   *  would throttle unrelated accounts' legitimate webhooks together.
+   *  120/min per hottok comfortably covers a real sales spike (cart
+   *  abandonment + billet + approval events can all fire close
+   *  together) while still bounding a leaked/guessed hottok. */
+  hotmartWebhook: { limit: 120, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't

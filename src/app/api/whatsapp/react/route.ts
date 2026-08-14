@@ -8,6 +8,7 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit';
+import { resolveWhatsappConfigForOwner } from '@/lib/whatsapp/resolve-config';
 
 /**
  * POST /api/whatsapp/react
@@ -86,7 +87,7 @@ export async function POST(request: Request) {
 
     const { data: conversation, error: convError } = await supabase
       .from('conversations')
-      .select('id, account_id, contact:contacts(phone)')
+      .select('id, account_id, assigned_agent_id, contact:contacts(phone, owner_id)')
       .eq('id', targetMessage.conversation_id)
       .eq('account_id', accountId)
       .maybeSingle();
@@ -108,14 +109,15 @@ export async function POST(request: Request) {
       );
     }
 
-    // WhatsApp config + access token. Account-scoped post-multi-user.
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('phone_number_id, access_token')
-      .eq('account_id', accountId)
-      .single();
+    // WhatsApp config + access token. 034: resolve the conversation's
+    // (or contact's) assigned vendor's number, falling back to primary.
+    const config = await resolveWhatsappConfigForOwner(
+      supabase,
+      accountId,
+      conversation.assigned_agent_id ?? contact.owner_id ?? null,
+    );
 
-    if (configError || !config) {
+    if (!config) {
       return NextResponse.json(
         { error: 'WhatsApp not configured.' },
         { status: 400 },

@@ -22,6 +22,10 @@ import type { PostgrestError } from "@supabase/supabase-js";
 
 import { hashInviteToken } from "@/lib/auth/invitations";
 import {
+  createAndSignInInvitee,
+  EmailAlreadyRegisteredError,
+} from "@/lib/auth/invite-signup";
+import {
   checkRateLimit,
   rateLimitResponse,
   RATE_LIMITS,
@@ -71,21 +75,75 @@ export async function POST(
 
   const supabase = await createClient();
 
-  // The RPC checks `auth.uid()` itself, but failing fast here
-  // gives a cleaner 401 without a Supabase round trip on the
-  // common "user clicked the link before logging in" path.
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
   if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // No session yet — this is the common case: a fresh visitor
+    // clicked the invite link. Instead of bouncing them to a
+    // separate /signup page (which depends on Supabase's mailer to
+    // confirm the account — broken in this project, see
+    // invite-signup.ts), the /join/<token> page collects
+    // name/email/password itself and posts them here. We create the
+    // auth user pre-confirmed and sign them into THIS request's
+    // session in one shot, then fall through to the same redeem
+    // logic as an already-authenticated caller.
+    const body = (await request.json().catch(() => null)) as
+      | { email?: unknown; password?: unknown; fullName?: unknown }
+      | null;
+
+    const email = typeof body?.email === "string" ? body.email.trim() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
+    const fullName =
+      typeof body?.fullName === "string" ? body.fullName.trim() : "";
+
+    if (!email || !fullName) {
+      return NextResponse.json(
+        { error: "Name and email are required" },
+        { status: 400 },
+      );
+    }
+    if (password.length < 6) {
+      return NextResponse.json(
+        { error: "Password must be at least 6 characters" },
+        { status: 400 },
+      );
+    }
+
+    try {
+      await createAndSignInInvitee(supabase, { email, password, fullName });
+    } catch (err) {
+      if (err instanceof EmailAlreadyRegisteredError) {
+        return NextResponse.json({ error: err.message }, { status: 409 });
+      }
+      console.error("[redeem] invitee create/sign-in error:", err);
+      return NextResponse.json(
+        { error: "Could not create your account" },
+        { status: 500 },
+      );
+    }
   }
 
+  const tokenHash = hashInviteToken(token);
   const { data: accountId, error } = await supabase.rpc("redeem_invitation", {
-    p_token_hash: hashInviteToken(token),
+    p_token_hash: tokenHash,
   });
 
-  if (error) return rpcErrorToResponse(error);
+  if (error) {
+    // Same "only fall through on a clean not_found" reasoning as
+    // the peek route — a token belongs to exactly one of the two
+    // invitation tables.
+    if (error.code === "22023" && error.message === "Invitation not found") {
+      const { data: platformResult, error: platformErr } =
+        await supabase.rpc("redeem_platform_invitation", {
+          p_token_hash: tokenHash,
+        });
+      if (platformErr) return rpcErrorToResponse(platformErr);
+      return NextResponse.json({ ok: true, ...platformResult });
+    }
+    return rpcErrorToResponse(error);
+  }
 
   return NextResponse.json({ ok: true, accountId });
 }
