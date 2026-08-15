@@ -19,7 +19,10 @@ import { resolveFallbackPolicy } from '@/lib/flows/fallback'
  * Auth: re-uses `AUTOMATION_CRON_SECRET` so operators only have one
  * secret to provision. The two endpoints (`/api/automations/cron`
  * and this one) are independent operations; we keep them on separate
- * URLs so one failing doesn't block the other.
+ * URLs so one failing doesn't block the other. Accepts the secret via
+ * `x-cron-secret` (external pinger) or `Authorization: Bearer`
+ * (Vercel Cron's auto-injected header when `CRON_SECRET` is set to
+ * the same value — vercel.json crons can't set custom headers).
  *
  * Hosting: hit on a schedule (Vercel Cron / GitHub Actions / external
  * pinger). A 5-minute interval is more than enough for a 24h timeout
@@ -35,7 +38,8 @@ export async function GET(request: Request) {
   // can't recover the secret byte-by-byte from response-time deltas.
   // Length pre-check is required by timingSafeEqual (throws otherwise)
   // and leaks only the length itself, which isn't sensitive.
-  const supplied = request.headers.get('x-cron-secret') ?? ''
+  const bearer = request.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]
+  const supplied = request.headers.get('x-cron-secret') ?? bearer ?? ''
   const suppliedBuf = Buffer.from(supplied)
   const expectedBuf = Buffer.from(expected)
   if (

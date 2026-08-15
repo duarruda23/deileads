@@ -6,8 +6,10 @@ import type { AutomationContext } from '@/lib/automations/engine'
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
  * on a schedule (Vercel Cron / external pinger) — requires a shared
- * secret via the `x-cron-secret` header to match
- * `AUTOMATION_CRON_SECRET`.
+ * secret matching `AUTOMATION_CRON_SECRET`, supplied either via the
+ * `x-cron-secret` header (external pinger) or `Authorization: Bearer`
+ * (Vercel Cron, which can't set arbitrary headers but auto-injects
+ * this one when a `CRON_SECRET` env var is set to the same value).
  *
  * The claim step (status = 'running') serves as a simple lock so
  * overlapping invocations don't double-process rows. Best-effort
@@ -19,7 +21,8 @@ export async function GET(request: Request) {
   if (!expected) {
     return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
   }
-  const supplied = request.headers.get('x-cron-secret')
+  const bearer = request.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]
+  const supplied = request.headers.get('x-cron-secret') ?? bearer
   if (supplied !== expected) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

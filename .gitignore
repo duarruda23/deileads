@@ -39,6 +39,7 @@ yarn-error.log*
 
 # vercel
 .vercel
+vercel-env-vars.txt
 
 # supabase CLI local cache (project link metadata, no secrets)
 supabase/.temp
