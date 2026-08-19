@@ -35,10 +35,15 @@ function LoginPageInner() {
   // account. After a successful sign-in we send them to the join
   // page to accept rather than to /dashboard.
   const inviteToken = searchParams.get("invite");
+  const linkError = searchParams.get("error");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    linkError === "auth-link-invalid"
+      ? "That link has expired or was already used. Request a new one below."
+      : null,
+  );
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const supabase = createClient();
