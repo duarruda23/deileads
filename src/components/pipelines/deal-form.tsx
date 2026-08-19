@@ -13,6 +13,7 @@ import type {
   DealStatus,
   PipelineStage,
   Profile,
+  Tag,
 } from "@/types";
 import {
   Sheet,
@@ -33,6 +34,7 @@ import {
   DollarSign,
   Loader2,
   Radar,
+  Tags as TagsIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -43,6 +45,7 @@ const SOURCE_LABELS: Record<string, string> = {
   meta_leadgen: "Meta Lead Ads",
   hotmart: "Hotmart",
   manual: "Manual",
+  import: "Imported",
 };
 
 // utm_ref's shape varies by source (Hotmart's {src, sck, xcod} vs. the
@@ -96,6 +99,10 @@ export function DealForm({
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [linkedConversation, setLinkedConversation] =
     useState<Conversation | null>(null);
+
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [contactTagIds, setContactTagIds] = useState<string[]>([]);
+  const [savingTags, setSavingTags] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [statusAction, setStatusAction] = useState<DealStatus | null>(null);
@@ -179,6 +186,52 @@ export function DealForm({
       cancelled = true;
     };
   }, [open, contactId, supabase]);
+
+  // Tags belong to the contact, not the deal — only relevant once
+  // there's an existing deal linked to a real contact to tag.
+  useEffect(() => {
+    if (!open || !deal || !contactId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setContactTagIds([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const [tagsRes, contactTagsRes] = await Promise.all([
+        supabase.from("tags").select("*").order("name"),
+        supabase.from("contact_tags").select("tag_id").eq("contact_id", contactId),
+      ]);
+      if (cancelled) return;
+      setAllTags((tagsRes.data ?? []) as Tag[]);
+      setContactTagIds((contactTagsRes.data ?? []).map((ct) => ct.tag_id as string));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, deal, contactId, supabase]);
+
+  async function toggleTag(tagId: string) {
+    if (!contactId) return;
+    setSavingTags(true);
+    const isSelected = contactTagIds.includes(tagId);
+
+    if (isSelected) {
+      const { error } = await supabase
+        .from("contact_tags")
+        .delete()
+        .eq("contact_id", contactId)
+        .eq("tag_id", tagId);
+      if (!error) setContactTagIds((prev) => prev.filter((id) => id !== tagId));
+      else toast.error("Failed to remove tag");
+    } else {
+      const { error } = await supabase
+        .from("contact_tags")
+        .insert({ contact_id: contactId, tag_id: tagId });
+      if (!error) setContactTagIds((prev) => [...prev, tagId]);
+      else toast.error("Failed to add tag");
+    }
+    setSavingTags(false);
+  }
 
   async function handleSave() {
     if (!title.trim() || !contactId || !stageId) {
@@ -332,6 +385,47 @@ export function DealForm({
                 </Link>
               )}
             </div>
+
+            {deal && contactId && (
+              <div className="grid gap-2">
+                <Label className="flex items-center gap-1.5 text-slate-300">
+                  <TagsIcon className="h-3.5 w-3.5" />
+                  Tags
+                </Label>
+                {allTags.length === 0 ? (
+                  <p className="text-xs text-slate-500">
+                    No tags yet —{" "}
+                    <Link href="/settings?tab=tags" className="text-primary hover:underline">
+                      create some in Settings
+                    </Link>
+                    .
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {allTags.map((tag) => {
+                      const selected = contactTagIds.includes(tag.id);
+                      return (
+                        <button
+                          key={tag.id}
+                          type="button"
+                          onClick={() => toggleTag(tag.id)}
+                          disabled={savingTags}
+                          className={`inline-flex cursor-pointer items-center rounded-full px-3 py-1 text-xs font-medium transition-all disabled:cursor-default ${
+                            selected
+                              ? "ring-2 ring-primary ring-offset-1 ring-offset-slate-900"
+                              : "opacity-50 hover:opacity-80"
+                          }`}
+                          style={{ backgroundColor: tag.color + "20", color: tag.color }}
+                        >
+                          {selected && <Check className="mr-1 size-3" />}
+                          {tag.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-[1fr_110px] gap-3">
               <div className="grid gap-2">

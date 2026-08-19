@@ -111,6 +111,7 @@ export interface Contact {
 export interface Tag {
   id: string;
   user_id: string;
+  account_id: string;
   name: string;
   color: string;
   created_at: string;
@@ -318,6 +319,7 @@ export type DealSource =
   | 'site_form'
   | 'meta_leadgen'
   | 'hotmart'
+  | 'import'
   | 'manual';
 
 export interface Deal {
