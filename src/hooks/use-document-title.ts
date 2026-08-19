@@ -27,7 +27,7 @@ import { useEffect } from "react";
  */
 export function useDocumentTitle(title: string): void {
   useEffect(() => {
-    const full = `${title} — wacrm`;
+    const full = `${title} — Deileads`;
 
     function apply() {
       if (document.title !== full) document.title = full;
