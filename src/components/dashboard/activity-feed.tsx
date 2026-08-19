@@ -15,6 +15,7 @@ import type { ActivityItem, ActivityKind } from '@/lib/dashboard/types'
 import { cn } from '@/lib/utils'
 import { EmptyState } from './empty-state'
 import { Skeleton } from './skeleton'
+import { useTranslations } from '@/hooks/use-translations'
 
 interface ActivityFeedProps {
   items: ActivityItem[] | null
@@ -42,6 +43,7 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
   // Start at 5 — a quick scan of the most recent events without
   // dominating vertical real estate. User expands explicitly via the
   // footer control when they want deeper history.
+  const { t } = useTranslations()
   const [pageSize, setPageSize] = useState<PageSize>(5)
 
   const totalLoaded = items?.length ?? 0
@@ -56,12 +58,12 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900">
       <header className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-        <h2 className="text-sm font-semibold text-white">Recent Activity</h2>
+        <h2 className="text-sm font-semibold text-white">{t('activityFeed.title')}</h2>
         <Link
           href="/inbox"
           className="text-xs font-medium text-primary hover:text-primary/80"
         >
-          View all →
+          {t('activityFeed.viewAll')}
         </Link>
       </header>
 
@@ -75,8 +77,8 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
         <div className="p-5">
           <EmptyState
             icon={Inbox}
-            title="No activity yet"
-            hint="Activity from messages, deals, broadcasts, and automations will appear here."
+            title={t('activityFeed.emptyTitle')}
+            hint={t('activityFeed.emptyHint')}
           />
         </div>
       ) : (
@@ -121,11 +123,11 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
           </ul>
           <footer className="flex items-center justify-between border-t border-slate-800 px-5 py-3 text-xs">
             <span className="text-slate-500 tabular-nums">
-              Showing {visible.length} of {totalLoaded}
+              {t('activityFeed.showing', { shown: visible.length, total: totalLoaded })}
               {totalLoaded === 50 ? '+' : ''}
             </span>
             <div className="flex items-center gap-1">
-              <span className="mr-1 text-slate-500">Show</span>
+              <span className="mr-1 text-slate-500">{t('activityFeed.show')}</span>
               {PAGE_SIZES.map((size, i) => {
                 const disabled = !isSizeUseful(size, i)
                 return (

@@ -6,6 +6,7 @@ import { Loader2, Upload, Trash2, Mail, CircleAlert } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useTranslations } from '@/hooks/use-translations';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -37,6 +38,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function ProfileForm() {
   const { user, profile, refreshProfile } = useAuth();
+  const { t } = useTranslations();
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -212,10 +214,9 @@ export function ProfileForm() {
   return (
     <Card className="bg-slate-900/40 border-slate-800">
       <CardHeader>
-        <CardTitle className="text-white">Profile</CardTitle>
+        <CardTitle className="text-white">{t('settingsProfile.title')}</CardTitle>
         <CardDescription className="text-slate-400">
-          How you show up across the app. Your avatar and name appear in the
-          header, sidebar, and anywhere your teammates see you.
+          {t('settingsProfile.subtitle')}
         </CardDescription>
       </CardHeader>
 
@@ -247,7 +248,7 @@ export function ProfileForm() {
                 disabled={saving}
               >
                 <Upload className="size-4" />
-                {currentAvatar ? 'Change photo' : 'Upload photo'}
+                {currentAvatar ? t('settingsProfile.changePhoto') : t('settingsProfile.uploadPhoto')}
               </Button>
               {currentAvatar && (
                 <Button
@@ -258,11 +259,11 @@ export function ProfileForm() {
                   className="text-slate-400 hover:text-white"
                 >
                   <Trash2 className="size-4" />
-                  Remove
+                  {t('settingsProfile.remove')}
                 </Button>
               )}
               <p className="w-full text-xs text-slate-500">
-                PNG, JPG, WebP, or GIF. Up to 2 MB.
+                {t('settingsProfile.fileHint')}
               </p>
             </div>
           </div>
@@ -270,7 +271,7 @@ export function ProfileForm() {
           {/* Name */}
           <div className="space-y-2">
             <Label htmlFor="profile-full-name" className="text-slate-200">
-              Display name
+              {t('settingsProfile.displayName')}
             </Label>
             <Input
               id="profile-full-name"
@@ -286,7 +287,7 @@ export function ProfileForm() {
           {/* Email */}
           <div className="space-y-2">
             <Label htmlFor="profile-email" className="text-slate-200">
-              Email
+              {t('settingsProfile.email')}
             </Label>
             <Input
               id="profile-email"
@@ -300,9 +301,10 @@ export function ProfileForm() {
               <p className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">
                 <Mail className="mt-0.5 size-3.5 shrink-0" />
                 <span>
-                  Check the inbox for <strong>{profile?.email}</strong> and{' '}
-                  <strong>{email}</strong> — both need to confirm before the
-                  change takes effect.
+                  {t('settingsProfile.emailChangeNotice', {
+                    oldEmail: profile?.email ?? '',
+                    newEmail: email,
+                  })}
                 </span>
               </p>
             )}
@@ -311,11 +313,11 @@ export function ProfileForm() {
           {/* Read-only block */}
           <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Account details
+              {t('settingsProfile.accountDetails')}
             </p>
             <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div>
-                <dt className="text-slate-500">Role</dt>
+                <dt className="text-slate-500">{t('settingsProfile.role')}</dt>
                 <dd className="mt-0.5 font-mono text-slate-200">
                   {/* `profile.role` is a legacy column (migration 017
                       marked it unused) that never reflects the real
@@ -326,11 +328,11 @@ export function ProfileForm() {
                 </dd>
               </div>
               <div>
-                <dt className="text-slate-500">Joined</dt>
+                <dt className="text-slate-500">{t('settingsProfile.joined')}</dt>
                 <dd className="mt-0.5 text-slate-200">{joined}</dd>
               </div>
               <div className="sm:col-span-2">
-                <dt className="text-slate-500">User ID</dt>
+                <dt className="text-slate-500">{t('settingsProfile.userId')}</dt>
                 <dd className="mt-0.5 break-all font-mono text-xs text-slate-400">
                   {user?.id ?? '—'}
                 </dd>
@@ -341,7 +343,7 @@ export function ProfileForm() {
           {!profile && (
             <p className="flex items-center gap-2 text-sm text-slate-400">
               <CircleAlert className="size-4" />
-              Loading your profile…
+              {t('settingsProfile.loading')}
             </p>
           )}
 
@@ -350,10 +352,10 @@ export function ProfileForm() {
               {saving ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Saving…
+                  {t('settingsProfile.saving')}
                 </>
               ) : (
-                'Save changes'
+                t('settingsProfile.save')
               )}
             </Button>
           </div>

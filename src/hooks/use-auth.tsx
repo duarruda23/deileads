@@ -34,6 +34,9 @@ interface Profile {
   beta_features: string[];
   account_id: string | null;
   account_role: AccountRole | null;
+  /** UI language preference — 'en' | 'pt-BR'. NOT NULL DEFAULT 'en'
+   *  in the DB (migration 036). See useTranslations(). */
+  locale: "en" | "pt-BR";
 }
 
 interface AccountSummary {
@@ -136,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // missing account collapses to null rather than a half-
           // populated row (shouldn't happen post-017 NOT NULL, but
           // belt-and-braces against forks running older schemas).
-          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role, account:accounts!inner(id, name, default_currency)",
+          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role, locale, account:accounts!inner(id, name, default_currency)",
         )
         .eq("user_id", userId)
         .maybeSingle();
@@ -196,6 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           beta_features: data.beta_features ?? [],
           account_id: data.account_id ?? null,
           account_role: accountRole,
+          locale: data.locale === "pt-BR" ? "pt-BR" : "en",
         });
         setAccount(accountRow);
       }
