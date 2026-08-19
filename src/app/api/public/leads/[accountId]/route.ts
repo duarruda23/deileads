@@ -54,6 +54,9 @@ interface SiteLeadPayload {
   phone?: string;
   email?: string;
   utm?: Record<string, string>;
+  /** Freeform context to attach to the deal's `notes` column — e.g.
+   *  an Instagram handle collected by a conversational LP. */
+  notes?: string;
   /** Honeypot — render this input hidden (CSS, not `type="hidden"`,
    *  which some bots skip) in the actual form. Real visitors never
    *  see or fill it. */
@@ -135,6 +138,7 @@ export async function POST(
     p_phone: phone,
     p_email: body.email ?? null,
     p_utm: body.utm ?? null,
+    p_notes: body.notes ?? null,
   });
 
   if (error) return rpcErrorToResponse(error);
