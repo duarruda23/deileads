@@ -39,9 +39,9 @@ import { ActivityFeed } from '@/components/dashboard/activity-feed'
 type RangeDays = 7 | 30 | 90
 
 export default function DashboardPage() {
-  useDocumentTitle('Dashboard')
   const { defaultCurrency } = useAuth()
   const { t } = useTranslations()
+  useDocumentTitle(t('dashboard.title'))
   const [metrics, setMetrics] = useState<MetricsBundle | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
 

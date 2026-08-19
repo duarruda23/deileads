@@ -31,6 +31,7 @@ import { LeadIntakeTokens } from '@/components/settings/lead-intake-tokens';
 import { InstagramConfig } from '@/components/settings/instagram-config';
 import { HotmartConfig } from '@/components/settings/hotmart-config';
 import { useDocumentTitle } from '@/hooks/use-document-title';
+import { useTranslations } from '@/hooks/use-translations';
 
 const TAB_VALUES = [
   'profile',
@@ -52,7 +53,8 @@ function isTabValue(v: string | null): v is TabValue {
 }
 
 export default function SettingsPage() {
-  useDocumentTitle('Settings');
+  const { t } = useTranslations();
+  useDocumentTitle(t('header.settings'));
   const router = useRouter();
   const searchParams = useSearchParams();
 
