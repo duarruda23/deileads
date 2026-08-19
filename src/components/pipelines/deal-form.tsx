@@ -32,8 +32,28 @@ import {
   MessageSquare,
   DollarSign,
   Loader2,
+  Radar,
 } from "lucide-react";
 import { toast } from "sonner";
+
+const SOURCE_LABELS: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  site_form: "Site Form",
+  meta_leadgen: "Meta Lead Ads",
+  hotmart: "Hotmart",
+  manual: "Manual",
+};
+
+// utm_ref's shape varies by source (Hotmart's {src, sck, xcod} vs. the
+// site form's utm_source/utm_medium/utm_campaign) — render whatever
+// keys are actually present rather than assuming one fixed shape.
+function utmEntries(utm: Record<string, unknown> | null | undefined) {
+  if (!utm) return [];
+  return Object.entries(utm).filter(
+    ([, v]) => v !== null && v !== undefined && v !== "",
+  ) as [string, string | number][];
+}
 
 interface DealFormProps {
   open: boolean;
@@ -444,6 +464,42 @@ export function DealForm({
                 )}
               </div>
             )}
+
+            {deal &&
+              (deal.source || deal.external_ref || utmEntries(deal.utm_ref).length > 0) && (
+                <div className="space-y-2 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                  <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-slate-400">
+                    <Radar className="h-3.5 w-3.5" />
+                    Tracking
+                  </p>
+                  <dl className="space-y-1.5 text-sm">
+                    {deal.source && (
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-slate-500">Source</dt>
+                        <dd className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                          {SOURCE_LABELS[deal.source] ?? deal.source}
+                        </dd>
+                      </div>
+                    )}
+                    {deal.external_ref && (
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-slate-500">Reference ID</dt>
+                        <dd className="break-all font-mono text-xs text-slate-300">
+                          {deal.external_ref}
+                        </dd>
+                      </div>
+                    )}
+                    {utmEntries(deal.utm_ref).map(([key, val]) => (
+                      <div key={key} className="flex items-center justify-between gap-2">
+                        <dt className="text-slate-500">{key}</dt>
+                        <dd className="break-all text-right text-xs text-slate-300">
+                          {String(val)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              )}
           </div>
 
           <div className="border-t border-slate-700/50 bg-slate-900/80 p-4">

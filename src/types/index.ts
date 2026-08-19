@@ -312,6 +312,14 @@ export interface PipelineStage {
 
 export type DealStatus = 'open' | 'won' | 'lost';
 
+export type DealSource =
+  | 'whatsapp'
+  | 'instagram'
+  | 'site_form'
+  | 'meta_leadgen'
+  | 'hotmart'
+  | 'manual';
+
 export interface Deal {
   id: string;
   user_id: string;
@@ -330,6 +338,17 @@ export interface Deal {
   notes?: string;
   expected_close_date?: string;
   status?: DealStatus;
+  /** How this deal was created — absent/null means created by hand. */
+  source?: DealSource | null;
+  /**
+   * Opaque, source-dependent attribution payload — e.g. `{ src, sck,
+   * xcod }` from Hotmart's `purchase.origin`, or `utm_source` /
+   * `utm_medium` / `utm_campaign` from the site-lead-intake form.
+   * Rendered generically (key: value) since the shape varies by source.
+   */
+  utm_ref?: Record<string, unknown> | null;
+  /** Free-text reference from the source system — e.g. a Hotmart transaction id. */
+  external_ref?: string | null;
   created_at: string;
   updated_at?: string;
   contact?: Contact;

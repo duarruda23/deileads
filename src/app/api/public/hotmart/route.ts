@@ -53,6 +53,9 @@ interface HotmartWebhookPayload {
     purchase?: {
       transaction?: string;
       origin?: { src?: string; sck?: string; xcod?: string };
+      // Only present once a transaction exists (approval-type events) —
+      // cart-abandonment fires before checkout, so it never carries this.
+      price?: { value?: number; currency_value?: string };
     };
   };
 }
@@ -139,6 +142,7 @@ export async function POST(request: Request) {
   const phone = extractPhone(buyer);
   const origin = body.data?.purchase?.origin;
   const utm = origin ? { src: origin.src, sck: origin.sck, xcod: origin.xcod } : null;
+  const price = body.data?.purchase?.price;
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("submit_hotmart_lead", {
@@ -149,6 +153,8 @@ export async function POST(request: Request) {
     p_email: buyer?.email ?? null,
     p_transaction: body.data?.purchase?.transaction ?? null,
     p_utm: utm,
+    p_value: price?.value ?? null,
+    p_currency: price?.currency_value ?? null,
   });
 
   if (error) return rpcErrorToResponse(error);
