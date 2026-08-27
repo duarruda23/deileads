@@ -9,7 +9,7 @@ import {
   normalizeKey,
 } from '@/lib/contacts/dedupe';
 import { CURRENCIES } from '@/lib/currency';
-import type { PipelineStage } from '@/types';
+import type { Pipeline, PipelineStage } from '@/types';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -133,6 +133,7 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
   const [mapping, setMapping] = useState<FieldKey[]>([]);
 
   const [createDeals, setCreateDeals] = useState(false);
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [pipelineId, setPipelineId] = useState<string | null>(null);
   const [stageId, setStageId] = useState('');
@@ -195,43 +196,60 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
     setMapping(parsed.headers.map(guessField));
   }
 
-  // Load the account's default pipeline + stages once "also create a
-  // deal" is turned on — same default-pipeline resolution used by
-  // submit_site_lead/submit_hotmart_lead (027/033), just done
-  // client-side here since this runs as the signed-in account owner.
+  // Load every pipeline the account has once "also create a deal" is
+  // turned on, defaulting the selection to the account's default
+  // pipeline (same one submit_site_lead/submit_hotmart_lead — 027/033
+  // — use), but letting the user pick a different one (e.g. a
+  // vendor's personal pipeline) instead of always landing in the
+  // default. Previously this only ever loaded the default pipeline
+  // with no way to import straight into someone's own funnel.
   useEffect(() => {
-    if (!createDeals || !accountId || pipelineId) return;
+    if (!createDeals || !accountId || pipelines.length > 0) return;
     let cancelled = false;
     setLoadingPipeline(true);
     (async () => {
-      const { data: pipeline } = await supabase
+      const { data: pipelineRows } = await supabase
         .from('pipelines')
-        .select('id')
+        .select('*')
         .eq('account_id', accountId)
-        .eq('is_default', true)
-        .maybeSingle();
+        .order('created_at');
       if (cancelled) return;
-      if (!pipeline) {
-        toast.error('This account has no default pipeline configured yet.');
+      if (!pipelineRows || pipelineRows.length === 0) {
+        toast.error('This account has no pipelines configured yet.');
         setCreateDeals(false);
         setLoadingPipeline(false);
         return;
       }
-      const { data: stageRows } = await supabase
-        .from('pipeline_stages')
-        .select('*')
-        .eq('pipeline_id', pipeline.id)
-        .order('position');
-      if (cancelled) return;
-      setPipelineId(pipeline.id);
-      setStages((stageRows ?? []) as PipelineStage[]);
-      setStageId((stageRows ?? [])[0]?.id ?? '');
+      setPipelines(pipelineRows as Pipeline[]);
+      const defaultPipeline =
+        (pipelineRows as (Pipeline & { is_default?: boolean })[]).find((p) => p.is_default) ??
+        pipelineRows[0];
+      setPipelineId(defaultPipeline.id);
       setLoadingPipeline(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [createDeals, accountId, pipelineId, supabase]);
+  }, [createDeals, accountId, pipelines.length, supabase]);
+
+  // Reload stages whenever the selected pipeline changes.
+  useEffect(() => {
+    if (!pipelineId) return;
+    let cancelled = false;
+    (async () => {
+      const { data: stageRows } = await supabase
+        .from('pipeline_stages')
+        .select('*')
+        .eq('pipeline_id', pipelineId)
+        .order('position');
+      if (cancelled) return;
+      setStages((stageRows ?? []) as PipelineStage[]);
+      setStageId((stageRows ?? [])[0]?.id ?? '');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pipelineId, supabase]);
 
   const parsedRows = useMemo(
     () => (csvData ? buildParsedRows(csvData, mapping) : []),
@@ -494,9 +512,27 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
               {createDeals && (
                 <div className="grid grid-cols-2 gap-3 pl-6">
                   <div className="grid gap-1.5">
+                    <Label className="text-xs text-slate-400">Pipeline</Label>
+                    {loadingPipeline ? (
+                      <p className="text-xs text-slate-500">Loading pipelines...</p>
+                    ) : (
+                      <select
+                        value={pipelineId ?? ''}
+                        onChange={(e) => setPipelineId(e.target.value)}
+                        className="h-8 rounded-md border border-slate-700 bg-slate-800 px-2 text-xs text-white outline-none focus:border-primary"
+                      >
+                        {pipelines.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <div className="grid gap-1.5">
                     <Label className="text-xs text-slate-400">Stage</Label>
                     {loadingPipeline ? (
-                      <p className="text-xs text-slate-500">Loading pipeline...</p>
+                      <p className="text-xs text-slate-500">Loading...</p>
                     ) : (
                       <select
                         value={stageId}
@@ -526,8 +562,9 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
                     </select>
                   </div>
                   <p className="col-span-2 text-xs text-slate-500">
-                    Every imported deal lands in this one stage. Importing leads that belong in
-                    different stages? Filter your export and run the import again per stage.
+                    Every imported deal lands in this one pipeline and stage. Importing leads that
+                    belong in different pipelines or stages? Filter your export and run the
+                    import again per pipeline/stage.
                   </p>
                 </div>
               )}

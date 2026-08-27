@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useDocumentTitle } from '@/hooks/use-document-title';
 import { toast } from 'sonner';
@@ -61,13 +62,16 @@ export default function ContactsPage() {
   const supabase = createClient();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
+  const searchParams = useSearchParams();
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
-  const [poolOnly, setPoolOnly] = useState(false);
+  // Deep-link from the pipelines page's "N leads disponíveis" badge
+  // (?pool=1) lands here with the pool filter already on.
+  const [poolOnly, setPoolOnly] = useState(() => searchParams.get('pool') === '1');
   const [poolCount, setPoolCount] = useState(0);
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [ownersMap, setOwnersMap] = useState<Record<string, string>>({});
