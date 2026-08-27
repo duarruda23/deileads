@@ -358,6 +358,26 @@ export interface Deal {
   assignee?: Profile;
 }
 
+// Follow-up tasks (040_tasks.sql). Always anchored to a contact;
+// deal_id is optional context for when the task was created from a
+// specific pipeline card (a contact can have deals in more than one
+// pipeline — see per-vendor pipelines).
+export interface Task {
+  id: string;
+  account_id: string;
+  contact_id: string;
+  deal_id?: string | null;
+  title: string;
+  due_at?: string | null;
+  completed_at?: string | null;
+  assigned_to?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  contact?: Contact;
+  assignee?: Profile;
+}
+
 export type BroadcastStatus =
   | 'draft'
   | 'scheduled'

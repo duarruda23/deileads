@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal } from '@/types';
+import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, Task } from '@/types';
 import {
   Sheet,
   SheetContent,
@@ -52,7 +52,7 @@ export function ContactDetailView({
   onUpdated,
 }: ContactDetailViewProps) {
   const supabase = createClient();
-  const { accountId, defaultCurrency, canManageMembers } = useAuth();
+  const { accountId, defaultCurrency, canManageMembers, profile } = useAuth();
   // Viewers can open this sheet read-only. Gating the Save button
   // (rather than relying on the update's error result) avoids the
   // misleading "Contact updated" toast: an UPDATE a viewer isn't
@@ -91,6 +91,13 @@ export function ContactDetailView({
   const [newNote, setNewNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [loadingNotes, setLoadingNotes] = useState(false);
+
+  // Tasks tab
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDueAt, setNewTaskDueAt] = useState('');
+  const [savingTask, setSavingTask] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(false);
 
   // Custom fields tab
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
@@ -165,6 +172,20 @@ export function ContactDetailView({
     setLoadingNotes(false);
   }, [contactId, supabase]);
 
+  const fetchTasks = useCallback(async () => {
+    if (!contactId) return;
+    setLoadingTasks(true);
+
+    const { data } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('contact_id', contactId)
+      .order('due_at', { ascending: true, nullsFirst: false });
+
+    if (data) setTasks(data as Task[]);
+    setLoadingTasks(false);
+  }, [contactId, supabase]);
+
   const fetchCustomFields = useCallback(async () => {
     if (!contactId) return;
     setLoadingCustom(true);
@@ -205,11 +226,12 @@ export function ContactDetailView({
       fetchContact();
       fetchTags();
       fetchNotes();
+      fetchTasks();
       fetchCustomFields();
       fetchDeals();
       if (canManageMembers) fetchMembers();
     }
-  }, [open, contactId, canManageMembers, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals, fetchMembers]);
+  }, [open, contactId, canManageMembers, fetchContact, fetchTags, fetchNotes, fetchTasks, fetchCustomFields, fetchDeals, fetchMembers]);
 
   async function copyPhone() {
     if (!contact?.phone) return;
@@ -372,6 +394,57 @@ export function ContactDetailView({
     }
   }
 
+  async function addTask() {
+    if (!contactId || !newTaskTitle.trim() || !accountId) return;
+    setSavingTask(true);
+
+    const { error } = await supabase.from('tasks').insert({
+      contact_id: contactId,
+      account_id: accountId,
+      title: newTaskTitle.trim(),
+      due_at: newTaskDueAt || null,
+      // Defaults to whoever is creating it from this lead's card —
+      // same "assign to me by default, reassignable elsewhere"
+      // convention deal-form.tsx already uses for deals.assigned_to.
+      assigned_to: profile?.id ?? null,
+      created_by: profile?.id ?? null,
+    });
+
+    if (error) {
+      toast.error('Failed to add task');
+    } else {
+      setNewTaskTitle('');
+      setNewTaskDueAt('');
+      fetchTasks();
+      toast.success('Task added');
+    }
+    setSavingTask(false);
+  }
+
+  async function toggleTask(task: Task) {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ completed_at: task.completed_at ? null : new Date().toISOString() })
+      .eq('id', task.id);
+
+    if (error) {
+      toast.error('Failed to update task');
+    } else {
+      fetchTasks();
+    }
+  }
+
+  async function deleteTask(taskId: string) {
+    const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+
+    if (error) {
+      toast.error('Failed to delete task');
+    } else {
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      toast.success('Task deleted');
+    }
+  }
+
   async function saveCustomFields() {
     if (!contactId) return;
     setSavingCustom(true);
@@ -520,6 +593,12 @@ export function ContactDetailView({
                   className="data-active:bg-slate-800 data-active:text-primary text-slate-400"
                 >
                   Notes
+                </TabsTrigger>
+                <TabsTrigger
+                  value="tasks"
+                  className="data-active:bg-slate-800 data-active:text-primary text-slate-400"
+                >
+                  Tasks
                 </TabsTrigger>
                 <TabsTrigger
                   value="custom"
@@ -709,6 +788,89 @@ export function ContactDetailView({
                             minute: '2-digit',
                           })}
                         </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </TabsContent>
+
+              {/* Tasks Tab */}
+              <TabsContent value="tasks" className="flex-1 flex flex-col min-h-0 px-4 py-3">
+                <div className="space-y-2 mb-3">
+                  <Input
+                    value={newTaskTitle}
+                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                    placeholder="Follow up about pricing..."
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <Input
+                      type="date"
+                      value={newTaskDueAt}
+                      onChange={(e) => setNewTaskDueAt(e.target.value)}
+                      className="bg-slate-800 border-slate-700 text-white text-sm"
+                    />
+                    <Button
+                      onClick={addTask}
+                      disabled={!newTaskTitle.trim() || savingTask}
+                      className="bg-primary hover:bg-primary/90 text-primary-foreground shrink-0"
+                      size="sm"
+                    >
+                      {savingTask ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="size-3.5" />
+                      )}
+                      Add Task
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-2">
+                  {loadingTasks ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="size-5 animate-spin text-slate-500" />
+                    </div>
+                  ) : tasks.length === 0 ? (
+                    <p className="text-sm text-slate-500 text-center py-8">
+                      No tasks yet.
+                    </p>
+                  ) : (
+                    tasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="flex items-start gap-2 rounded-lg bg-slate-800/50 border border-slate-700/50 p-3 group"
+                      >
+                        <button
+                          onClick={() => toggleTask(task)}
+                          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                            task.completed_at
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-slate-600'
+                          }`}
+                        >
+                          {task.completed_at && <Check className="size-3" />}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p
+                            className={`text-sm whitespace-pre-wrap ${
+                              task.completed_at ? 'text-slate-500 line-through' : 'text-slate-300'
+                            }`}
+                          >
+                            {task.title}
+                          </p>
+                          {task.due_at && (
+                            <p className="text-xs text-slate-500 mt-1">
+                              Due {new Date(task.due_at).toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => deleteTask(task.id)}
+                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
                       </div>
                     ))
                   )}

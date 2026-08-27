@@ -9,6 +9,7 @@ import { useTranslations } from "@/hooks/use-translations";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import type { DictKey } from "@/lib/i18n/dictionaries";
 import {
+  CheckSquare,
   Crown,
   GitBranch,
   LayoutDashboard,
@@ -93,6 +94,7 @@ const navItems: NavItem[] = [
   { href: "/inbox", labelKey: "nav.inbox", icon: MessageSquare },
   { href: "/contacts", labelKey: "nav.contacts", icon: Users },
   { href: "/pipelines", labelKey: "nav.pipelines", icon: GitBranch },
+  { href: "/tasks", labelKey: "nav.tasks", icon: CheckSquare },
   { href: "/broadcasts", labelKey: "nav.broadcasts", icon: Radio },
   { href: "/automations", labelKey: "nav.automations", icon: Zap },
   { href: "/flows", labelKey: "nav.flows", icon: Workflow, beta: true },
