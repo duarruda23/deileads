@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings } from "lucide-react";
+import { GitBranch, Plus, ChevronDown, Settings, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
@@ -36,13 +36,19 @@ import { GatedButton } from "@/components/ui/gated-button";
 // agent+. The two CTAs gate on different `useCan` capabilities,
 // not on different copy.
 
-// Spec-defined seed — name and color per the product spec.
+// Mirrors the seed used for a new account's default pipeline
+// (admin_create_account RPC, migration 030) so every pipeline in the
+// product — the one seeded at account creation and any created later
+// from this dialog — shares the same stage names and stage_type.
+// Previously this array was the wacrm template's English default and
+// never set stage_type at all (silently defaulting to 'open'), which
+// meant a pipeline created here could never mark a deal as won.
 const SPEC_DEFAULT_STAGES = [
-  { name: "New Lead", color: "#3b82f6", position: 0 }, // blue
-  { name: "Qualified", color: "#eab308", position: 1 }, // yellow
-  { name: "Proposal Sent", color: "#f97316", position: 2 }, // orange
-  { name: "Negotiation", color: "#8b5cf6", position: 3 }, // purple
-  { name: "Won", color: "#22c55e", position: 4 }, // green
+  { name: "Novo Lead", color: "#3b82f6", stage_type: "open", position: 0 }, // blue
+  { name: "Em Contato", color: "#eab308", stage_type: "open", position: 1 }, // yellow
+  { name: "Qualificado", color: "#f97316", stage_type: "open", position: 2 }, // orange
+  { name: "Fechado Ganho", color: "#22c55e", stage_type: "won", position: 3 }, // green
+  { name: "Fechado Perdido", color: "#ef4444", stage_type: "lost", position: 4 }, // red
 ];
 
 export default function PipelinesPage() {
@@ -57,6 +63,7 @@ export default function PipelinesPage() {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [poolCount, setPoolCount] = useState(0);
 
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
@@ -106,6 +113,18 @@ export default function PipelinesPage() {
     [supabase],
   );
 
+  // Caça-leads: same unowned-contacts count shown on /contacts, surfaced
+  // here too so a vendor sees the pool without having to know that page
+  // exists — this is the visible "N leads available" counter described
+  // when the feature was designed, which only ever landed on Contacts.
+  const loadPoolCount = useCallback(async () => {
+    const { count } = await supabase
+      .from("contacts")
+      .select("id", { count: "exact", head: true })
+      .is("owner_id", null);
+    setPoolCount(count ?? 0);
+  }, [supabase]);
+
   // Initial load. Deliberately does NOT auto-create a pipeline when
   // the account has none — it used to, silently, on every page visit
   // to a zero-pipeline account. That raced with a user who opened
@@ -138,6 +157,10 @@ export default function PipelinesPage() {
       cancelled = true;
     };
   }, [loadPipelines]);
+
+  useEffect(() => {
+    loadPoolCount();
+  }, [loadPoolCount]);
 
   // Load stages + deals whenever selected pipeline changes.
   // Clearing on no-selection is a legitimate sync with URL/prop
@@ -253,6 +276,7 @@ export default function PipelinesPage() {
       pipeline_id: pipeline.id,
       name: s.name,
       color: s.color,
+      stage_type: s.stage_type,
       position: s.position,
     }));
     await supabase.from("pipeline_stages").insert(stagesPayload);
@@ -334,6 +358,15 @@ export default function PipelinesPage() {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          <a
+            href="/contacts?pool=1"
+            className="inline-flex items-center gap-2 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-300 hover:bg-amber-950/50 transition-colors"
+          >
+            <Users className="h-4 w-4" />
+            <span className="font-semibold">{poolCount}</span>
+            <span className="hidden sm:inline">leads disponíveis</span>
+          </a>
         </div>
 
         <div className="flex items-center gap-2">
@@ -411,7 +444,7 @@ export default function PipelinesPage() {
               }}
             />
             <p className="mt-2 text-xs text-slate-400">
-              Default stages (New Lead → Won) will be created automatically.
+              As etapas padrão (Novo Lead → Fechado Ganho/Perdido) serão criadas automaticamente.
             </p>
           </div>
           <DialogFooter className="bg-slate-900/50 border-slate-700">
