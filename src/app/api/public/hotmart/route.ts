@@ -57,6 +57,12 @@ interface HotmartWebhookPayload {
       // cart-abandonment fires before checkout, so it never carries this.
       price?: { value?: number; currency_value?: string };
     };
+    // Present on every event shape Hotmart sends (purchase AND
+    // cart-abandonment alike) — unlike purchase.transaction, this
+    // doesn't depend on a transaction existing yet, which is exactly
+    // why product-based tagging (042) works even for an open/abandoned
+    // lead, not just an approved sale.
+    product?: { id?: number | string; name?: string };
   };
 }
 
@@ -143,6 +149,12 @@ export async function POST(request: Request) {
   const origin = body.data?.purchase?.origin;
   const utm = origin ? { src: origin.src, sck: origin.sck, xcod: origin.xcod } : null;
   const price = body.data?.purchase?.price;
+  const product = body.data?.product;
+  // Hotmart sends product.id as a number; the RPC/hotmart_products
+  // both take it as text (see 042) — stringify here once instead of
+  // at every call site.
+  const productId =
+    product?.id === undefined || product.id === null ? null : String(product.id);
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("submit_hotmart_lead", {
@@ -155,6 +167,8 @@ export async function POST(request: Request) {
     p_utm: utm,
     p_value: price?.value ?? null,
     p_currency: price?.currency_value ?? null,
+    p_product_id: productId,
+    p_product_name: product?.name ?? null,
   });
 
   if (error) return rpcErrorToResponse(error);

@@ -44,6 +44,9 @@ interface ConfigPayload {
   connected: boolean;
   enabledEvents: string[];
   updatedAt: string | null;
+  clientId: string | null;
+  apiCredentialsConnected: boolean;
+  productsSyncedAt: string | null;
 }
 
 export function HotmartConfig() {
@@ -55,6 +58,10 @@ export function HotmartConfig() {
   const [enabledEvents, setEnabledEvents] = useState<string[]>(
     EVENT_OPTIONS.map((e) => e.value),
   );
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [existingClientId, setExistingClientId] = useState<string | null>(null);
+  const [apiCredentialsConnected, setApiCredentialsConnected] = useState(false);
 
   const webhookUrl =
     typeof window === 'undefined'
@@ -71,6 +78,8 @@ export function HotmartConfig() {
       if (!response.ok) throw new Error('Failed to load Hotmart config');
       setConnected(payload.connected);
       setEnabledEvents(payload.enabledEvents);
+      setExistingClientId(payload.clientId);
+      setApiCredentialsConnected(payload.apiCredentialsConnected);
     } catch {
       toast.error('Failed to load Hotmart configuration');
     } finally {
@@ -112,6 +121,8 @@ export function HotmartConfig() {
           // what "reconnect after Hotmart rotates it" looks like).
           hottok: hottok.trim() || undefined,
           enabledEvents,
+          clientId: clientId.trim() || undefined,
+          clientSecret: clientSecret.trim() || undefined,
         }),
       });
       const payload = await response.json();
@@ -121,6 +132,8 @@ export function HotmartConfig() {
       }
       toast.success('Hotmart conectado');
       setHottok('');
+      setClientId('');
+      setClientSecret('');
       await load();
     } finally {
       setSaving(false);
@@ -244,6 +257,59 @@ export function HotmartConfig() {
               é o que identifica a sua.
             </p>
           </div>
+
+          {connected && (
+            <div className="space-y-4 rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+              <div>
+                <p className="text-sm font-medium text-white">
+                  Credenciais de API (opcional)
+                </p>
+                <p className="text-xs text-slate-500">
+                  Diferente do Hottok acima — essas credenciais deixam o
+                  Deileads perguntar pra Hotmart quais produtos existem na
+                  sua conta, em vez de só esperar uma venda acontecer.
+                  Encontradas em Ferramentas → Credenciais, dentro do painel
+                  da Hotmart (crie uma credencial se ainda não tiver uma).
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-slate-300">Client ID</Label>
+                <Input
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  placeholder={
+                    existingClientId
+                      ? `Atual: ${existingClientId}`
+                      : 'Cole o Client ID'
+                  }
+                  className="border-slate-700 bg-slate-800 text-white placeholder:text-slate-500"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-slate-300">Client Secret</Label>
+                <Input
+                  type="password"
+                  value={clientSecret}
+                  onChange={(e) => setClientSecret(e.target.value)}
+                  placeholder={
+                    apiCredentialsConnected
+                      ? 'Cole novamente só se quiser trocar'
+                      : 'Cole o Client Secret'
+                  }
+                  className="border-slate-700 bg-slate-800 text-white placeholder:text-slate-500"
+                />
+              </div>
+
+              {apiCredentialsConnected && (
+                <p className="text-xs text-emerald-400">
+                  Credenciais de API salvas — a lista de produtos fica em
+                  &quot;Produtos e correlação&quot;, logo abaixo.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
             <Button

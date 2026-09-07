@@ -7,18 +7,29 @@
 // GET    — connection status + which events are enabled. Never
 //          returns the hottok itself (write-only secret, same as
 //          every other credential in this codebase — only its hash
-//          is ever persisted).
+//          is ever persisted), nor the client secret (write-only,
+//          encrypted at rest — see POST below).
 // POST   — upsert: paste/replace the hottok and/or change enabled
 //          events. Re-pasting the same hottok is how an admin
 //          "reconnects" after Hotmart rotates it.
+//          `clientId`/`clientSecret` (042) are a SEPARATE credential
+//          pair from the hottok — Hotmart's own OAuth app
+//          credentials (Ferramentas → Credenciais), needed to call
+//          Hotmart's Product List API from
+//          /api/account/hotmart-products/sync. Both are optional on
+//          every save so an admin can wire up the webhook first and
+//          add API access later, or vice versa.
 // DELETE — disconnect. Doesn't touch any deal/contact already
-//          created from past webhook deliveries.
+//          created from past webhook deliveries, nor the synced
+//          hotmart_products catalog (a re-connect shouldn't force
+//          re-building "produtos correlacionados" from scratch).
 // ============================================================
 
 import { NextResponse } from "next/server";
 
 import { requireRole, toErrorResponse } from "@/lib/auth/account";
 import { hashHottok } from "@/lib/auth/hotmart";
+import { encrypt } from "@/lib/whatsapp/encryption";
 
 // Curated subset of Hotmart's purchase events this integration
 // understands. Hotmart has more (PURCHASE_CANCELED, PURCHASE_REFUNDED,
@@ -36,7 +47,9 @@ export async function GET() {
     const ctx = await requireRole("admin");
     const { data, error } = await ctx.supabase
       .from("hotmart_config")
-      .select("enabled_events, created_at, updated_at")
+      .select(
+        "enabled_events, client_id, created_at, updated_at, products_synced_at",
+      )
       .eq("account_id", ctx.accountId)
       .maybeSingle();
 
@@ -52,6 +65,14 @@ export async function GET() {
       connected: !!data,
       enabledEvents: data?.enabled_events ?? SUPPORTED_EVENTS,
       updatedAt: data?.updated_at ?? null,
+      // clientId is not a secret (it's the public half of the OAuth
+      // pair) — safe to echo back so the UI can show "already set"
+      // without making the admin re-paste it every visit.
+      clientId: data?.client_id ?? null,
+      // clientSecret itself never leaves the server — the UI only
+      // needs to know whether one is on file.
+      apiCredentialsConnected: !!data?.client_id,
+      productsSyncedAt: data?.products_synced_at ?? null,
     });
   } catch (err) {
     return toErrorResponse(err);
@@ -65,10 +86,27 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => null)) as {
       hottok?: unknown;
       enabledEvents?: unknown;
+      clientId?: unknown;
+      clientSecret?: unknown;
     } | null;
 
     const hottok = typeof body?.hottok === "string" ? body.hottok.trim() : "";
-    if (!hottok) {
+    const clientId =
+      typeof body?.clientId === "string" ? body.clientId.trim() : "";
+    const clientSecret =
+      typeof body?.clientSecret === "string" ? body.clientSecret.trim() : "";
+
+    // A row must exist (i.e. the webhook side is already connected)
+    // before API credentials can be attached — hotmart_config.id is
+    // what hotmart_products/sync looks up, and there's nothing
+    // account-scoped to upsert onto without a hottok first.
+    const { data: existing } = await ctx.supabase
+      .from("hotmart_config")
+      .select("id")
+      .eq("account_id", ctx.accountId)
+      .maybeSingle();
+
+    if (!hottok && !existing) {
       return NextResponse.json({ error: "hottok is required" }, { status: 400 });
     }
 
@@ -87,12 +125,20 @@ export async function POST(request: Request) {
       );
     }
 
+    const upsertRow: Record<string, unknown> = {
+      account_id: ctx.accountId,
+      enabled_events: enabledEvents,
+    };
+    // Only touch hottok_hash / client_id / client_secret when a new
+    // value was actually pasted — an admin editing just the enabled
+    // events (or just the API credentials) shouldn't have to re-type
+    // the other secrets to avoid wiping them.
+    if (hottok) upsertRow.hottok_hash = hashHottok(hottok);
+    if (clientId) upsertRow.client_id = clientId;
+    if (clientSecret) upsertRow.client_secret = encrypt(clientSecret);
+
     const { error } = await ctx.supabase.from("hotmart_config").upsert(
-      {
-        account_id: ctx.accountId,
-        hottok_hash: hashHottok(hottok),
-        enabled_events: enabledEvents,
-      },
+      upsertRow,
       { onConflict: "account_id" },
     );
 

@@ -247,6 +247,33 @@ export interface WhatsAppConfig {
   profile?: Profile;
 }
 
+/** 042: a "produto correlacionado" — one or more raw Hotmart
+ *  products the account admin has decided are the same logical
+ *  offer, linked to the tag that gets auto-applied on purchase. */
+export interface HotmartProductGroup {
+  id: string;
+  account_id: string;
+  name: string;
+  tag_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 042: one product as it exists in the account's real Hotmart
+ *  catalog — either pulled by /api/account/hotmart-products/sync or
+ *  auto-registered by the webhook the first time a sale for it
+ *  arrives (synced_at stays null in that case). */
+export interface HotmartProduct {
+  id: string;
+  account_id: string;
+  hotmart_product_id: string;
+  name: string;
+  group_id?: string | null;
+  synced_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)
 // rather than collapsing to a local TitleCase set — distinctions like
 // PAUSED vs DISABLED vs IN_APPEAL drive the edit/resubmit/delete flows.

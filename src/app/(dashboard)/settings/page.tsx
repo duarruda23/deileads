@@ -30,6 +30,7 @@ import { CustomFieldsSettings } from '@/components/settings/custom-fields-settin
 import { LeadIntakeTokens } from '@/components/settings/lead-intake-tokens';
 import { InstagramConfig } from '@/components/settings/instagram-config';
 import { HotmartConfig } from '@/components/settings/hotmart-config';
+import { HotmartProducts } from '@/components/settings/hotmart-products';
 import { useDocumentTitle } from '@/hooks/use-document-title';
 import { useTranslations } from '@/hooks/use-translations';
 
@@ -235,8 +236,9 @@ export default function SettingsPage() {
         )}
 
         {canEditSettings && (
-          <TabsContent value="hotmart">
+          <TabsContent value="hotmart" className="space-y-5">
             <HotmartConfig />
+            <HotmartProducts />
           </TabsContent>
         )}
 
