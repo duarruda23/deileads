@@ -28,6 +28,8 @@ import { NextResponse } from "next/server";
 import type { PostgrestError } from "@supabase/supabase-js";
 
 import { hashHottok } from "@/lib/auth/hotmart";
+import { supabaseAdmin } from "@/lib/automations/admin-client";
+import { runAutomationsForTrigger } from "@/lib/automations/engine";
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -173,5 +175,67 @@ export async function POST(request: Request) {
 
   if (error) return rpcErrorToResponse(error);
 
+  // submit_hotmart_lead already applied the group's tag (if any) to the
+  // contact directly in SQL — that write never goes through application
+  // code, so nothing has fired the `tag_added` automation trigger for it
+  // yet (the only other place that happens is the WhatsApp inbound
+  // webhook). Dispatch it here, fire-and-forget, so per-account
+  // combined-tag automations (e.g. "Desafio + Análise") built on top of
+  // this can actually run. Generic across every account — nothing below
+  // is specific to any one Hotmart seller.
+  const responseBody = data as { contact_id?: string; tag_applied?: boolean } | null;
+  if (responseBody?.tag_applied && responseBody.contact_id && productId) {
+    dispatchTagAddedForHotmartProduct({
+      hottokHash,
+      contactId: responseBody.contact_id,
+      productId,
+    }).catch((err) =>
+      console.error("[hotmart-webhook] tag_added dispatch failed:", err),
+    );
+  }
+
   return NextResponse.json(data, { status: 201 });
+}
+
+/**
+ * Resolve which tag submit_hotmart_lead just applied (via the product's
+ * group) and dispatch the `tag_added` automation trigger for it. Split
+ * into its own function so the main handler can fire it without
+ * awaiting — the webhook response to Hotmart must not wait on this.
+ */
+async function dispatchTagAddedForHotmartProduct(args: {
+  hottokHash: string;
+  contactId: string;
+  productId: string;
+}): Promise<void> {
+  const admin = supabaseAdmin();
+
+  const { data: config } = await admin
+    .from("hotmart_config")
+    .select("account_id")
+    .eq("hottok_hash", args.hottokHash)
+    .maybeSingle();
+  if (!config?.account_id) return;
+
+  const { data: product } = await admin
+    .from("hotmart_products")
+    .select("group_id")
+    .eq("account_id", config.account_id)
+    .eq("hotmart_product_id", args.productId)
+    .maybeSingle();
+  if (!product?.group_id) return;
+
+  const { data: group } = await admin
+    .from("hotmart_product_groups")
+    .select("tag_id")
+    .eq("id", product.group_id)
+    .maybeSingle();
+  if (!group?.tag_id) return;
+
+  await runAutomationsForTrigger({
+    accountId: config.account_id,
+    triggerType: "tag_added",
+    contactId: args.contactId,
+    context: { tag_id: group.tag_id },
+  });
 }
