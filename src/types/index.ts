@@ -335,6 +335,7 @@ export interface PipelineStage {
   name: string;
   position: number;
   color: string;
+  stage_type: 'open' | 'won' | 'lost';
   created_at: string;
 }
 

@@ -36,6 +36,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+const STAGE_TYPES: { value: PipelineStage["stage_type"]; label: string }[] = [
+  { value: "open", label: "Aberto" },
+  { value: "won", label: "Ganho" },
+  { value: "lost", label: "Perdido" },
+];
+
 const STAGE_COLORS = [
   "#3b82f6",
   "#6366f1",
@@ -74,6 +80,8 @@ export function PipelineSettings({
   const [localStages, setLocalStages] = useState<PipelineStage[]>(stages);
   const [newStageName, setNewStageName] = useState("");
   const [newStageColor, setNewStageColor] = useState(STAGE_COLORS[0]);
+  const [newStageType, setNewStageType] =
+    useState<PipelineStage["stage_type"]>("open");
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -113,6 +121,7 @@ export function PipelineSettings({
       pipeline_id: s.pipeline_id,
       name: s.name,
       color: s.color,
+      stage_type: s.stage_type,
       position: i,
     }));
 
@@ -146,6 +155,7 @@ export function PipelineSettings({
         pipeline_id: pipeline.id,
         name: trimmed,
         color: newStageColor,
+        stage_type: newStageType,
         position: localStages.length,
       })
       .select()
@@ -157,6 +167,7 @@ export function PipelineSettings({
     setLocalStages([...localStages, data as PipelineStage]);
     setNewStageName("");
     setNewStageColor(STAGE_COLORS[(localStages.length + 1) % STAGE_COLORS.length]);
+    setNewStageType("open");
   }
 
   async function handleRemoveStage(stageId: string) {
@@ -273,6 +284,11 @@ export function PipelineSettings({
                             updated[index] = { ...updated[index], color: v };
                             setLocalStages(updated);
                           }}
+                          onTypeChange={(v) => {
+                            const updated = [...localStages];
+                            updated[index] = { ...updated[index], stage_type: v };
+                            setLocalStages(updated);
+                          }}
                           onRemove={() => handleRemoveStage(stage.id)}
                           colors={STAGE_COLORS}
                         />
@@ -308,6 +324,20 @@ export function PipelineSettings({
                       if (e.key === "Enter") handleAddStage();
                     }}
                   />
+                  <select
+                    value={newStageType}
+                    onChange={(e) =>
+                      setNewStageType(e.target.value as PipelineStage["stage_type"])
+                    }
+                    aria-label="Stage type"
+                    className="h-9 shrink-0 rounded-md border border-slate-700 bg-slate-800 px-2 text-sm text-white"
+                  >
+                    {STAGE_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
                   <Button
                     variant="outline"
                     size="sm"
@@ -365,12 +395,14 @@ function SortableStageRow({
   stage,
   onNameChange,
   onColorChange,
+  onTypeChange,
   onRemove,
   colors,
 }: {
   stage: PipelineStage;
   onNameChange: (v: string) => void;
   onColorChange: (v: string) => void;
+  onTypeChange: (v: PipelineStage["stage_type"]) => void;
   onRemove: () => void;
   colors: string[];
 }) {
@@ -404,6 +436,18 @@ function SortableStageRow({
         onChange={(e) => onNameChange(e.target.value)}
         className="h-7 flex-1 border-transparent bg-transparent text-sm text-white focus:border-slate-600"
       />
+      <select
+        value={stage.stage_type}
+        onChange={(e) => onTypeChange(e.target.value as PipelineStage["stage_type"])}
+        aria-label={`Stage type for ${stage.name}`}
+        className="h-7 shrink-0 rounded-md border border-slate-700 bg-slate-900 px-1.5 text-xs text-white"
+      >
+        {STAGE_TYPES.map((t) => (
+          <option key={t.value} value={t.value}>
+            {t.label}
+          </option>
+        ))}
+      </select>
       <Button
         variant="ghost"
         size="icon-xs"
