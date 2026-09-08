@@ -192,6 +192,13 @@ export function HotmartConfig() {
           <CardTitle className="flex items-center gap-2 text-white">
             <ShoppingBag className="size-5" /> Integração com Hotmart
           </CardTitle>
+          {!connected && (
+            <p className="text-sm text-slate-400">
+              Conecta sua conta Hotmart pra que compras e carrinhos
+              abandonados virem lead automaticamente no seu Kanban, sem
+              precisar cadastrar nada manualmente.
+            </p>
+          )}
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-2">

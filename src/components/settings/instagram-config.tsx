@@ -50,7 +50,7 @@ export function InstagramConfig() {
       });
       const payload = (await response.json()) as HealthPayload;
       if (!response.ok)
-        throw new Error(payload.message || 'Failed to load configuration');
+        throw new Error(payload.message || 'Falha ao carregar configuração');
       setConnected(payload.connected);
       setPageId(payload.config?.page_id || '');
       setInstagramAccountId(payload.config?.ig_business_account_id || '');
@@ -60,7 +60,7 @@ export function InstagramConfig() {
       toast.error(
         err instanceof Error
           ? err.message
-          : 'Failed to load Instagram configuration'
+          : 'Falha ao carregar a configuração do Instagram'
       );
     } finally {
       setLoading(false);
@@ -78,7 +78,7 @@ export function InstagramConfig() {
       !verifyToken.trim()
     ) {
       toast.error(
-        'Instagram Account ID, Access Token, and Verify Token are required'
+        'Preencha o ID da conta do Instagram, o Access Token e o Verify Token'
       );
       return;
     }
@@ -96,14 +96,14 @@ export function InstagramConfig() {
       });
       const payload = await response.json();
       if (!response.ok) {
-        toast.error(payload.error || 'Failed to save Instagram configuration');
+        toast.error(payload.error || 'Falha ao salvar a configuração do Instagram');
         return;
       }
       if (payload.subscription_error) {
         setErrorMessage(payload.subscription_error);
-        toast.warning('Credentials saved, but webhook subscription failed');
+        toast.warning('Credenciais salvas, mas a assinatura do webhook falhou');
       } else {
-        toast.success('Instagram connected and subscribed');
+        toast.success('Instagram conectado e assinado');
       }
       setAccessToken('');
       setVerifyToken('');
@@ -116,14 +116,14 @@ export function InstagramConfig() {
   async function disconnect() {
     const response = await fetch('/api/instagram/config', { method: 'DELETE' });
     if (!response.ok) {
-      toast.error('Failed to disconnect Instagram');
+      toast.error('Falha ao desconectar o Instagram');
       return;
     }
     setConnected(false);
     setUsername('');
     setPageId('');
     setInstagramAccountId('');
-    toast.success('Instagram disconnected');
+    toast.success('Instagram desconectado');
   }
 
   if (loading) {
@@ -139,16 +139,17 @@ export function InstagramConfig() {
       {connected && (
         <Alert className="border-emerald-500/40 bg-emerald-500/10 text-emerald-200">
           <CheckCircle2 className="size-4" />
-          <AlertTitle>Instagram connected</AlertTitle>
+          <AlertTitle>Instagram conectado</AlertTitle>
           <AlertDescription>
-            {username ? `@${username}` : instagramAccountId} is ready to receive
-            DMs.
+            {username ? `@${username}` : instagramAccountId} já está pronta pra
+            receber DMs — mensagens diretas do Instagram viram lead/conversa
+            automaticamente aqui no Deileads.
           </AlertDescription>
         </Alert>
       )}
       {errorMessage && (
         <Alert className="border-amber-500/40 bg-amber-500/10 text-amber-200">
-          <AlertTitle>Connection needs attention</AlertTitle>
+          <AlertTitle>Conexão precisa de atenção</AlertTitle>
           <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
       )}
@@ -156,21 +157,32 @@ export function InstagramConfig() {
       <Card className="border-slate-700 bg-slate-900 ring-0">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-white">
-            <Camera className="size-5" /> Instagram Messaging API
+            <Camera className="size-5" /> Integração com Instagram (Direct)
           </CardTitle>
+          {!connected && (
+            <p className="text-sm text-slate-400">
+              Conecta a conta profissional do Instagram pra que as mensagens
+              diretas (DMs) recebidas apareçam e possam ser respondidas direto
+              por aqui. Precisa de uma conta Instagram profissional
+              (Empresarial ou Criador de conteúdo) e de um app criado em{' '}
+              <span className="text-slate-300">developers.facebook.com</span>.
+            </p>
+          )}
         </CardHeader>
         <CardContent className="space-y-4">
           <Field
-            label="Instagram Professional Account ID"
+            label="ID da conta profissional do Instagram"
             value={instagramAccountId}
             onChange={setInstagramAccountId}
             placeholder="1784…"
+            hint="No painel do seu app em developers.facebook.com → Instagram → API Setup with Instagram Login, copie o 'Instagram user ID' da conta conectada."
           />
           <Field
-            label="Facebook Page ID (optional for Instagram Login)"
+            label="ID da Página do Facebook (opcional pra Instagram Login)"
             value={pageId}
             onChange={setPageId}
-            placeholder="Page-backed integrations only"
+            placeholder="Só necessário em integrações via Página vinculada"
+            hint="Preencha apenas se sua conta do Instagram estiver conectada a uma Página do Facebook (fluxo mais antigo). Pra Instagram Login direto, pode deixar em branco."
           />
           <Field
             label="Access Token"
@@ -179,16 +191,18 @@ export function InstagramConfig() {
             secret={!showSecrets}
             placeholder={
               connected
-                ? 'Re-enter to update configuration'
-                : 'Meta access token'
+                ? 'Preencha de novo pra atualizar a configuração'
+                : 'Token de acesso gerado no painel da Meta'
             }
+            hint="Gerado em developers.facebook.com → seu app → Configurações do app → Configurações Básicas, ou via Explorador da API Graph com as permissões do Instagram Messaging concedidas."
           />
           <Field
             label="Webhook Verify Token"
             value={verifyToken}
             onChange={setVerifyToken}
             secret={!showSecrets}
-            placeholder="A private value you choose"
+            placeholder="Um valor privado que você mesmo inventa"
+            hint="Você cria essa palavra-chave (qualquer texto). Cole exatamente o mesmo valor no campo 'Verify Token' quando cadastrar o webhook abaixo lá no painel da Meta."
           />
           <button
             type="button"
@@ -200,16 +214,21 @@ export function InstagramConfig() {
             ) : (
               <Eye className="size-3" />
             )}
-            {showSecrets ? 'Hide secrets' : 'Show secrets'}
+            {showSecrets ? 'Ocultar valores' : 'Mostrar valores'}
           </button>
           <div className="space-y-2">
-            <Label className="text-slate-300">Webhook callback URL</Label>
+            <Label className="text-slate-300">URL de callback do webhook</Label>
             <Input
               readOnly
               value={webhookUrl}
               className="border-slate-700 bg-slate-800 font-mono text-xs text-white"
               onFocus={(event) => event.currentTarget.select()}
             />
+            <p className="text-xs text-slate-500">
+              Cole essa URL no painel da Meta em Instagram → Configuração →
+              Webhooks, junto com o mesmo Verify Token de cima, e assine o
+              campo &quot;messages&quot;.
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -217,8 +236,8 @@ export function InstagramConfig() {
               disabled={saving}
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              {saving && <Loader2 className="size-4 animate-spin" />} Save and
-              subscribe
+              {saving && <Loader2 className="size-4 animate-spin" />} Salvar e
+              assinar
             </Button>
             {connected && (
               <Button
@@ -226,7 +245,7 @@ export function InstagramConfig() {
                 onClick={disconnect}
                 className="border-red-500/40 text-red-300 hover:bg-red-500/10"
               >
-                <Trash2 className="size-4" /> Disconnect
+                <Trash2 className="size-4" /> Desconectar
               </Button>
             )}
           </div>
@@ -242,12 +261,14 @@ function Field({
   onChange,
   placeholder,
   secret = false,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   secret?: boolean;
+  hint?: string;
 }) {
   return (
     <div className="space-y-2">
@@ -259,6 +280,7 @@ function Field({
         placeholder={placeholder}
         className="border-slate-700 bg-slate-800 text-white placeholder:text-slate-500"
       />
+      {hint && <p className="text-xs text-slate-500">{hint}</p>}
     </div>
   );
 }

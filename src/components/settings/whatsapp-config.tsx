@@ -68,7 +68,7 @@ export function WhatsAppConfig() {
       setConnections((connectionsRes.data ?? []) as ConnectionRow[]);
     } catch (err) {
       console.error('Failed to load WhatsApp connections roster:', err);
-      toast.error('Failed to load connections');
+      toast.error('Falha ao carregar as conexões');
     } finally {
       setLoading(false);
     }
@@ -88,13 +88,13 @@ export function WhatsAppConfig() {
       });
       if (!res.ok) {
         const data = await res.json();
-        toast.error(data.error || 'Failed to set primary connection');
+        toast.error(data.error || 'Falha ao definir a conexão principal');
         return;
       }
-      toast.success('Primary connection updated. Broadcasts and Templates will use this number.');
+      toast.success('Conexão principal atualizada. Disparos e Modelos vão usar esse número.');
       await fetchRoster();
     } catch {
-      toast.error('Failed to set primary connection');
+      toast.error('Falha ao definir a conexão principal');
     } finally {
       setPromoting(null);
     }
@@ -130,18 +130,20 @@ export function WhatsAppConfig() {
   return (
     <div className="mt-4 space-y-4">
       <div>
-        <h3 className="text-white font-medium">WhatsApp connections</h3>
+        <h3 className="text-white font-medium">Conexões de WhatsApp</h3>
         <p className="text-sm text-slate-400">
-          Each teammate connects their own WhatsApp number. The number marked{' '}
-          <Star className="inline size-3 -mt-0.5 text-amber-400" /> Primary is used for
-          Broadcasts and Message Templates, regardless of who owns a given lead.
+          Cada integrante do time conecta o próprio número de WhatsApp. O
+          número marcado como{' '}
+          <Star className="inline size-3 -mt-0.5 text-amber-400" /> Principal
+          é o usado nos Disparos e nos Modelos de mensagem, independente de
+          quem é dono de um lead específico.
         </p>
       </div>
 
       <Card className="bg-slate-900 border-slate-700 ring-0 ring-transparent">
         <CardContent className="p-0 divide-y divide-slate-800">
           {members.length === 0 ? (
-            <p className="p-4 text-sm text-slate-500">No teammates yet.</p>
+            <p className="p-4 text-sm text-slate-500">Ainda não tem ninguém no time.</p>
           ) : (
             members.map((m) => {
               const conn = connectionByUser.get(m.user_id);
@@ -159,8 +161,8 @@ export function WhatsAppConfig() {
                     </Avatar>
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-white truncate">
-                        {m.full_name || m.email || 'Unnamed'}
-                        {isSelf && <span className="text-slate-500 font-normal"> (you)</span>}
+                        {m.full_name || m.email || 'Sem nome'}
+                        {isSelf && <span className="text-slate-500 font-normal"> (você)</span>}
                       </p>
                       <p className="text-xs text-slate-500 truncate flex items-center gap-1">
                         {conn ? (
@@ -169,7 +171,7 @@ export function WhatsAppConfig() {
                             {conn.phone_number_id}
                           </>
                         ) : (
-                          'Not connected'
+                          'Não conectado'
                         )}
                       </p>
                     </div>
@@ -179,19 +181,19 @@ export function WhatsAppConfig() {
                     {conn?.is_primary && (
                       <Badge className="bg-amber-500/10 text-amber-300 border-amber-500/30 gap-1">
                         <Star className="size-3" />
-                        Primary
+                        Principal
                       </Badge>
                     )}
                     {conn ? (
                       conn.status === 'connected' ? (
                         <Badge className="bg-primary/10 text-primary border-primary/30 gap-1">
                           <CheckCircle2 className="size-3" />
-                          Connected
+                          Conectado
                         </Badge>
                       ) : (
                         <Badge className="bg-red-500/10 text-red-300 border-red-500/30 gap-1">
                           <XCircle className="size-3" />
-                          Disconnected
+                          Desconectado
                         </Badge>
                       )
                     ) : null}
@@ -206,18 +208,18 @@ export function WhatsAppConfig() {
                         {promoting === m.user_id ? (
                           <Loader2 className="size-3.5 animate-spin" />
                         ) : (
-                          'Make primary'
+                          'Tornar principal'
                         )}
                       </Button>
                     )}
                     <Button
                       size="sm"
                       onClick={() =>
-                        setSelected({ userId: m.user_id, label: m.full_name || m.email || 'this teammate' })
+                        setSelected({ userId: m.user_id, label: m.full_name || m.email || 'este integrante' })
                       }
                       className="bg-primary hover:bg-primary/90 text-primary-foreground"
                     >
-                      {conn ? 'Manage' : 'Connect'}
+                      {conn ? 'Gerenciar' : 'Conectar'}
                     </Button>
                   </div>
                 </div>
