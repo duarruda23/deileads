@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { CURRENCIES } from "@/lib/currency";
+import { dispatchDealStageEvent } from "@/lib/automations/dispatch-client";
 import type {
   Contact,
   Conversation,
@@ -268,6 +269,15 @@ export function DealForm({
         setSaving(false);
         return;
       }
+      if (deal.stage_id !== stageId) {
+        void dispatchDealStageEvent({
+          contactId: contactId,
+          dealId: deal.id,
+          pipelineId,
+          stageId,
+          event: "moved",
+        });
+      }
     } else {
       const {
         data: { session },
@@ -283,14 +293,23 @@ export function DealForm({
         setSaving(false);
         return;
       }
-      const { error } = await supabase
+      const { data: created, error } = await supabase
         .from("deals")
-        .insert({ ...payload, user_id: user.id, account_id: accountId, status: "open" });
-      if (error) {
+        .insert({ ...payload, user_id: user.id, account_id: accountId, status: "open" })
+        .select("id")
+        .single();
+      if (error || !created) {
         toast.error("Failed to create deal");
         setSaving(false);
         return;
       }
+      void dispatchDealStageEvent({
+        contactId,
+        dealId: created.id,
+        pipelineId,
+        stageId,
+        event: "created",
+      });
     }
 
     setSaving(false);

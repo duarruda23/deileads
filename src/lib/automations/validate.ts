@@ -168,6 +168,16 @@ export function validateTriggerForActivation(
     if (!nonEmpty(cfg.tag_id)) {
       issues.push({ path: 'trigger.tag_id', message: 'tag is required' })
     }
+  } else if (triggerType === 'deal_stage_changed') {
+    if (!nonEmpty(cfg.pipeline_id)) {
+      issues.push({ path: 'trigger.pipeline_id', message: 'pipeline is required' })
+    }
+    if (!nonEmpty(cfg.stage_id)) {
+      issues.push({ path: 'trigger.stage_id', message: 'stage is required' })
+    }
+    if (!['created', 'moved', 'both'].includes(String(cfg.mode))) {
+      issues.push({ path: 'trigger.mode', message: 'mode must be "created", "moved", or "both"' })
+    }
   }
 
   return issues

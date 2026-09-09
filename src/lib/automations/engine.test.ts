@@ -95,9 +95,71 @@ vi.mock("./meta-send", () => ({
   engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
 }));
 
-import { runAutomationsForTrigger } from "./engine";
+import { runAutomationsForTrigger, triggerMatches } from "./engine";
+import type { Automation } from "@/types";
 
 const ACCOUNT = "acct-1";
+
+function dealStageAutomation(mode: "created" | "moved" | "both"): Automation {
+  return {
+    id: "a1",
+    account_id: ACCOUNT,
+    user_id: "u1",
+    name: "n",
+    trigger_type: "deal_stage_changed",
+    trigger_config: { pipeline_id: "pipe-1", stage_id: "stage-1", mode },
+    is_active: true,
+    execution_count: 0,
+    created_at: "",
+    updated_at: "",
+  } as Automation;
+}
+
+describe("triggerMatches — deal_stage_changed", () => {
+  it("only fires for the configured pipeline + stage", () => {
+    const automation = dealStageAutomation("both");
+    expect(
+      triggerMatches(automation, {
+        pipeline_id: "pipe-1",
+        stage_id: "stage-1",
+        deal_stage_event: "created",
+      }),
+    ).toBe(true);
+    expect(
+      triggerMatches(automation, {
+        pipeline_id: "pipe-1",
+        stage_id: "OTHER-stage",
+        deal_stage_event: "created",
+      }),
+    ).toBe(false);
+  });
+
+  it("respects mode: created / moved / both", () => {
+    const ctxFor = (event: "created" | "moved") => ({
+      pipeline_id: "pipe-1",
+      stage_id: "stage-1",
+      deal_stage_event: event,
+    });
+    expect(triggerMatches(dealStageAutomation("created"), ctxFor("created"))).toBe(true);
+    expect(triggerMatches(dealStageAutomation("created"), ctxFor("moved"))).toBe(false);
+    expect(triggerMatches(dealStageAutomation("moved"), ctxFor("moved"))).toBe(true);
+    expect(triggerMatches(dealStageAutomation("moved"), ctxFor("created"))).toBe(false);
+    expect(triggerMatches(dealStageAutomation("both"), ctxFor("created"))).toBe(true);
+    expect(triggerMatches(dealStageAutomation("both"), ctxFor("moved"))).toBe(true);
+  });
+
+  it("refuses to match when the trigger is missing pipeline/stage config", () => {
+    const broken = dealStageAutomation("both");
+    broken.trigger_config = { mode: "both" };
+    expect(
+      triggerMatches(broken, {
+        pipeline_id: "pipe-1",
+        stage_id: "stage-1",
+        deal_stage_event: "created",
+      }),
+    ).toBe(false);
+  });
+});
 
 beforeEach(() => {
   h.state.owned = null;

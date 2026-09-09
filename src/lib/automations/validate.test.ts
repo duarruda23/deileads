@@ -230,6 +230,28 @@ describe("validateTriggerForActivation", () => {
     ).toEqual([]);
   });
 
+  it("requires pipeline_id, stage_id, and a valid mode on deal_stage_changed triggers", () => {
+    expect(validateTriggerForActivation("deal_stage_changed", {})).toEqual([
+      { path: "trigger.pipeline_id", message: "pipeline is required" },
+      { path: "trigger.stage_id", message: "stage is required" },
+      { path: "trigger.mode", message: 'mode must be "created", "moved", or "both"' },
+    ]);
+    expect(
+      validateTriggerForActivation("deal_stage_changed", {
+        pipeline_id: "pipe-1",
+        stage_id: "stage-1",
+        mode: "moved",
+      }),
+    ).toEqual([]);
+    expect(
+      validateTriggerForActivation("deal_stage_changed", {
+        pipeline_id: "pipe-1",
+        stage_id: "stage-1",
+        mode: "bogus",
+      }).map((i) => i.path),
+    ).toEqual(["trigger.mode"]);
+  });
+
   it("does not flag unknown trigger types (handled elsewhere)", () => {
     expect(validateTriggerForActivation("some_future_trigger", {})).toEqual([]);
   });

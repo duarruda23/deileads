@@ -4,6 +4,7 @@ import type {
   AutomationStep,
   AutomationTriggerType,
   ConditionStepConfig,
+  DealStageTriggerConfig,
   KeywordMatchTriggerConfig,
   SendMessageStepConfig,
   SendTemplateStepConfig,
@@ -33,6 +34,14 @@ export interface AutomationContext {
   tag_id?: string
   /** Agent the conversation was assigned to, for conversation_assigned. */
   agent_id?: string
+  /** Deal that changed stage, for deal_stage_changed. */
+  deal_id?: string
+  pipeline_id?: string
+  stage_id?: string
+  /** Whether the deal was just created directly in stage_id, or moved
+   *  into it from a different stage. Required to match a
+   *  deal_stage_changed automation's configured mode. */
+  deal_stage_event?: 'created' | 'moved'
 }
 
 export interface DispatchInput {
@@ -158,6 +167,72 @@ export async function resumePendingExecution(pending: {
     console.error('[automations] resume failed:', err)
     await markPending(pending.id, 'failed')
   }
+}
+
+/**
+ * One-off backfill for a `deal_stage_changed` automation: run it now
+ * against every deal already sitting in the configured pipeline/stage,
+ * instead of waiting for a future create/move event to fire it. Used by
+ * the "apply to deals already in this stage" action in the builder, so
+ * activating a new automation doesn't skip everyone who reached that
+ * stage before the automation existed.
+ *
+ * Bypasses triggerMatches — the deals returned by the query already
+ * match the automation's pipeline_id/stage_id by construction, and mode
+ * (created/moved/both) is meaningless for a manual one-off run.
+ */
+export async function runAutomationForExistingDeals(
+  automationId: string,
+  accountId: string,
+): Promise<{ processed: number }> {
+  const db = supabaseAdmin()
+
+  const { data: automation, error: autoErr } = await db
+    .from('automations')
+    .select('*')
+    .eq('id', automationId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+
+  if (autoErr || !automation) {
+    throw new Error(autoErr?.message ?? 'automation not found')
+  }
+  if (automation.trigger_type !== 'deal_stage_changed') {
+    throw new Error('backfill only applies to deal_stage_changed automations')
+  }
+
+  const cfg = automation.trigger_config as DealStageTriggerConfig
+  if (!cfg?.pipeline_id || !cfg?.stage_id) {
+    throw new Error('automation trigger is missing pipeline_id/stage_id')
+  }
+
+  const { data: deals, error: dealsErr } = await db
+    .from('deals')
+    .select('id, contact_id')
+    .eq('account_id', accountId)
+    .eq('pipeline_id', cfg.pipeline_id)
+    .eq('stage_id', cfg.stage_id)
+
+  if (dealsErr) throw new Error(dealsErr.message)
+
+  let processed = 0
+  for (const deal of deals ?? []) {
+    if (!deal.contact_id) continue
+    await executeAutomation(automation as Automation, {
+      accountId,
+      triggerType: 'deal_stage_changed',
+      contactId: deal.contact_id as string,
+      context: {
+        deal_id: deal.id as string,
+        pipeline_id: cfg.pipeline_id,
+        stage_id: cfg.stage_id,
+        deal_stage_event: 'created',
+      },
+    })
+    processed++
+  }
+
+  return { processed }
 }
 
 // ------------------------------------------------------------
@@ -345,7 +420,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_message': {
       const cfg = step.step_config as SendMessageStepConfig
       if (!args.contactId) throw new Error('send_message needs a contact')
-      const text = interpolate(cfg.text, args)
+      const text = await interpolate(cfg.text, args)
       if (!text.trim()) throw new Error('send_message has empty text')
       const conversationId = await resolveConversationId(args)
       const { whatsapp_message_id } = await engineSendText({
@@ -367,20 +442,24 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       // we MUST emit params in strict numeric order. Lexicographic sort
       // of "1", "2", …, "10" yields "1", "10", "2", … which silently
       // scrambles every template with ≥10 variables.
-      const params = cfg.variables
-        ? Object.keys(cfg.variables)
-            .sort((a, b) => {
-              const na = Number(a)
-              const nb = Number(b)
-              const aNum = Number.isFinite(na)
-              const bNum = Number.isFinite(nb)
-              if (aNum && bNum) return na - nb
-              if (aNum) return -1
-              if (bNum) return 1
-              return a.localeCompare(b)
-            })
-            .map((k) => String(cfg.variables![k]))
+      const sortedKeys = cfg.variables
+        ? Object.keys(cfg.variables).sort((a, b) => {
+            const na = Number(a)
+            const nb = Number(b)
+            const aNum = Number.isFinite(na)
+            const bNum = Number.isFinite(nb)
+            if (aNum && bNum) return na - nb
+            if (aNum) return -1
+            if (bNum) return 1
+            return a.localeCompare(b)
+          })
         : []
+      // Values support the same {{ contact.* }} / {{ vars.* }} placeholders
+      // as send_message, so a template variable can carry the contact's
+      // real name instead of a hardcoded string sent to every recipient.
+      const params = await Promise.all(
+        sortedKeys.map((k) => interpolate(String(cfg.variables![k]), args)),
+      )
       const { whatsapp_message_id } = await engineSendTemplate({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -462,9 +541,9 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'update_contact_field': {
       const cfg = step.step_config as UpdateContactFieldStepConfig
       if (!args.contactId) throw new Error('update_contact_field needs a contact')
-      // Resolve workflow variables ({{ vars.* }}, {{ message.text }}) so custom
-      // values can be populated dynamically from the triggering context.
-      const value = interpolate(cfg.value, args)
+      // Resolve workflow variables ({{ vars.* }}, {{ message.text }}, {{ contact.* }})
+      // so custom values can be populated dynamically from the triggering context.
+      const value = await interpolate(cfg.value, args)
 
       // Custom fields are encoded as `custom:<custom_field_id>`; anything else
       // is a built-in contact column.
@@ -531,7 +610,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         pipeline_id: cfg.pipeline_id,
         stage_id: cfg.stage_id,
         contact_id: args.contactId,
-        title: interpolate(cfg.title, args),
+        title: await interpolate(cfg.title, args),
         value: cfg.value ?? 0,
         currency: acct?.default_currency ?? 'USD',
         status: 'open',
@@ -542,7 +621,9 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
-      const body = cfg.body_template ? interpolate(cfg.body_template, args) : JSON.stringify(args.context)
+      const body = cfg.body_template
+        ? await interpolate(cfg.body_template, args)
+        : JSON.stringify(args.context)
       const res = await fetch(cfg.url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}) },
@@ -593,17 +674,31 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   return data.id as string
 }
 
-function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
-  if (automation.trigger_type !== 'keyword_match') return true
-  const cfg = automation.trigger_config as KeywordMatchTriggerConfig
-  if (!cfg?.keywords || cfg.keywords.length === 0) return false
-  const text = (ctx?.message_text ?? '').toString()
-  if (!text) return false
-  const haystack = cfg.case_sensitive ? text : text.toLowerCase()
-  return cfg.keywords.some((raw) => {
-    const k = cfg.case_sensitive ? raw : raw.toLowerCase()
-    return cfg.match_type === 'exact' ? haystack === k : haystack.includes(k)
-  })
+export function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
+  if (automation.trigger_type === 'keyword_match') {
+    const cfg = automation.trigger_config as KeywordMatchTriggerConfig
+    if (!cfg?.keywords || cfg.keywords.length === 0) return false
+    const text = (ctx?.message_text ?? '').toString()
+    if (!text) return false
+    const haystack = cfg.case_sensitive ? text : text.toLowerCase()
+    return cfg.keywords.some((raw) => {
+      const k = cfg.case_sensitive ? raw : raw.toLowerCase()
+      return cfg.match_type === 'exact' ? haystack === k : haystack.includes(k)
+    })
+  }
+
+  if (automation.trigger_type === 'deal_stage_changed') {
+    const cfg = automation.trigger_config as DealStageTriggerConfig
+    if (!cfg?.pipeline_id || !cfg?.stage_id) return false
+    if (ctx?.pipeline_id !== cfg.pipeline_id) return false
+    if (ctx?.stage_id !== cfg.stage_id) return false
+    if (cfg.mode === 'both') return true
+    return ctx?.deal_stage_event === cfg.mode
+  }
+
+  // Every other trigger type has no per-automation filter beyond the
+  // trigger_type match already applied in the fetch, so it always fires.
+  return true
 }
 
 async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): Promise<boolean> {
@@ -663,13 +758,48 @@ function waitMs(cfg: WaitStepConfig): number {
   return Math.max(1_000, cfg.amount * unitMs)
 }
 
-function interpolate(s: string, args: ExecuteArgs): string {
-  return s.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => {
-    const [ns, prop] = String(key).split('.')
-    if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
-    if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
-    return ''
-  })
+const CONTACT_INTERPOLATE_FIELDS = new Set(['name', 'email', 'company'])
+
+/**
+ * Resolves `{{ message.text }}`, `{{ vars.* }}`, and `{{ contact.* }}`
+ * placeholders. `contact.*` needs a DB read (name/email/company aren't
+ * carried in AutomationContext), so this is async — every call site
+ * must await it. One extra SELECT per placeholder-bearing string is
+ * fine at this volume (one outbound message per contact per step).
+ */
+async function interpolate(s: string, args: ExecuteArgs): Promise<string> {
+  if (!/\{\{\s*[\w.]+\s*\}\}/.test(s)) return s
+
+  let contact: Record<string, unknown> | null | undefined
+  async function contactField(prop: string): Promise<string> {
+    if (!args.contactId || !CONTACT_INTERPOLATE_FIELDS.has(prop)) return ''
+    if (contact === undefined) {
+      const { data } = await supabaseAdmin()
+        .from('contacts')
+        .select('name, email, company')
+        .eq('id', args.contactId)
+        .eq('account_id', args.automation.account_id)
+        .maybeSingle()
+      contact = data ?? null
+    }
+    const v = contact?.[prop]
+    return v != null ? String(v) : ''
+  }
+
+  const matches = [...s.matchAll(/\{\{\s*([\w.]+)\s*\}\}/g)]
+  let result = ''
+  let lastIndex = 0
+  for (const m of matches) {
+    const idx = m.index ?? 0
+    result += s.slice(lastIndex, idx)
+    const [ns, prop] = m[1].split('.')
+    if (ns === 'message' && prop === 'text') result += String(args.context.message_text ?? '')
+    else if (ns === 'vars' && prop) result += String(args.context.vars?.[prop] ?? '')
+    else if (ns === 'contact' && prop) result += await contactField(prop)
+    lastIndex = idx + m[0].length
+  }
+  result += s.slice(lastIndex)
+  return result
 }
 
 async function appendResults(

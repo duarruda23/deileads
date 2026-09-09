@@ -9,6 +9,7 @@ import {
   normalizeKey,
 } from '@/lib/contacts/dedupe';
 import { CURRENCIES } from '@/lib/currency';
+import { dispatchDealStageEvent } from '@/lib/automations/dispatch-client';
 import type { Pipeline, PipelineStage } from '@/types';
 import { toast } from 'sonner';
 import {
@@ -371,17 +372,30 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
         imported++;
 
         if (createDeals && pipelineId) {
-          await supabase.from('deals').insert({
-            user_id: user.id,
-            account_id: accountId,
-            pipeline_id: pipelineId,
-            stage_id: stageId,
-            contact_id: contact.id,
-            title: row.name || row.phone,
-            value: parseFloat(row.value ?? '') || 0,
-            currency,
-            source: 'import',
-          });
+          const { data: dealRow } = await supabase
+            .from('deals')
+            .insert({
+              user_id: user.id,
+              account_id: accountId,
+              pipeline_id: pipelineId,
+              stage_id: stageId,
+              contact_id: contact.id,
+              title: row.name || row.phone,
+              value: parseFloat(row.value ?? '') || 0,
+              currency,
+              source: 'import',
+            })
+            .select('id')
+            .single();
+          if (dealRow) {
+            void dispatchDealStageEvent({
+              contactId: contact.id,
+              dealId: dealRow.id,
+              pipelineId,
+              stageId,
+              event: 'created',
+            });
+          }
         }
 
         const rowTagIds = (row.tags ?? '')

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useDocumentTitle } from "@/hooks/use-document-title";
+import { dispatchDealStageEvent } from "@/lib/automations/dispatch-client";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
@@ -209,6 +210,7 @@ export default function PipelinesPage() {
 
   const handleDealMoved = useCallback(
     async (dealId: string, newStageId: string) => {
+      const moved = deals.find((d) => d.id === dealId);
       // Optimistic update — board already animated; just persist.
       setDeals((prev) =>
         prev.map((d) => (d.id === dealId ? { ...d, stage_id: newStageId } : d)),
@@ -220,9 +222,19 @@ export default function PipelinesPage() {
       if (error) {
         toast.error("Failed to move deal");
         refreshDeals();
+        return;
+      }
+      if (moved) {
+        void dispatchDealStageEvent({
+          contactId: moved.contact_id,
+          dealId,
+          pipelineId: moved.pipeline_id,
+          stageId: newStageId,
+          event: "moved",
+        });
       }
     },
-    [supabase, refreshDeals],
+    [supabase, refreshDeals, deals],
   );
 
   const handleAddDeal = useCallback(

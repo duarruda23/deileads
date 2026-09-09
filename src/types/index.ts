@@ -475,7 +475,8 @@ export type AutomationTriggerType =
   | 'new_contact_created'
   | 'conversation_assigned'
   | 'tag_added'
-  | 'time_based';
+  | 'time_based'
+  | 'deal_stage_changed';
 
 export type AutomationStepType =
   | 'send_message'
@@ -508,11 +509,23 @@ export interface TimeBasedTriggerConfig {
   timezone?: string;
 }
 
+export interface DealStageTriggerConfig {
+  pipeline_id: string;
+  stage_id: string;
+  /**
+   * 'created' fires only when a deal is created directly in this stage.
+   * 'moved' fires only when an existing deal is moved into this stage
+   * from a different one. 'both' fires on either event.
+   */
+  mode: 'created' | 'moved' | 'both';
+}
+
 export type AutomationTriggerConfig =
   | Record<string, never>
   | KeywordMatchTriggerConfig
   | TagTriggerConfig
   | TimeBasedTriggerConfig
+  | DealStageTriggerConfig
   | Record<string, unknown>;
 
 export interface SendMessageStepConfig {

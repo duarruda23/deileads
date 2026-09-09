@@ -47,8 +47,11 @@ import type {
   AutomationStepType,
   AutomationTriggerType,
   CustomField,
+  DealStageTriggerConfig,
   KeywordMatchTriggerConfig,
   MessageTemplate,
+  Pipeline,
+  PipelineStage,
   Tag as TagRecord,
 } from "@/types"
 import { createClient } from "@/lib/supabase/client"
@@ -127,6 +130,11 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
   { value: "conversation_assigned", label: "Conversation Assigned", hint: "When assigned to an agent" },
   { value: "tag_added", label: "Tag Added", hint: "When a tag is added to a contact" },
   { value: "time_based", label: "Time-Based", hint: "On a recurring schedule" },
+  {
+    value: "deal_stage_changed",
+    label: "Deal Stage Changed",
+    hint: "When a deal is created in, moved into, or either, a pipeline stage",
+  },
 ]
 
 function cid(): string {
@@ -181,6 +189,8 @@ interface AutomationResources {
   members: AccountMember[]
   templates: MessageTemplate[]
   customFields: CustomField[]
+  pipelines: Pipeline[]
+  stages: PipelineStage[]
 }
 
 const ResourcesContext = createContext<AutomationResources>({
@@ -188,6 +198,8 @@ const ResourcesContext = createContext<AutomationResources>({
   members: [],
   templates: [],
   customFields: [],
+  pipelines: [],
+  stages: [],
 })
 
 function useResources(): AutomationResources {
@@ -199,29 +211,36 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   const [members, setMembers] = useState<AccountMember[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [customFields, setCustomFields] = useState<CustomField[]>([])
+  const [pipelines, setPipelines] = useState<Pipeline[]>([])
+  const [stages, setStages] = useState<PipelineStage[]>([])
 
   useEffect(() => {
     let cancelled = false
     const supabase = createClient()
 
-    // Tags, templates and custom fields come straight from the DB — RLS
-    // scopes them to the caller's account. Only APPROVED templates can
-    // actually be sent (anything else 400s at send time), matching the
-    // broadcast picker.
+    // Tags, templates, custom fields, pipelines and stages come straight
+    // from the DB — RLS scopes them to the caller's account. Only
+    // APPROVED templates can actually be sent (anything else 400s at
+    // send time), matching the broadcast picker.
     void (async () => {
-      const [tagsRes, templatesRes, customFieldsRes] = await Promise.all([
-        supabase.from("tags").select("*").order("name"),
-        supabase
-          .from("message_templates")
-          .select("*")
-          .eq("status", "APPROVED")
-          .order("name"),
-        supabase.from("custom_fields").select("*").order("field_name"),
-      ])
+      const [tagsRes, templatesRes, customFieldsRes, pipelinesRes, stagesRes] =
+        await Promise.all([
+          supabase.from("tags").select("*").order("name"),
+          supabase
+            .from("message_templates")
+            .select("*")
+            .eq("status", "APPROVED")
+            .order("name"),
+          supabase.from("custom_fields").select("*").order("field_name"),
+          supabase.from("pipelines").select("*").order("name"),
+          supabase.from("pipeline_stages").select("*").order("position"),
+        ])
       if (cancelled) return
       setTags((tagsRes.data as TagRecord[] | null) ?? [])
       setTemplates((templatesRes.data as MessageTemplate[] | null) ?? [])
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])
+      setPipelines((pipelinesRes.data as Pipeline[] | null) ?? [])
+      setStages((stagesRes.data as PipelineStage[] | null) ?? [])
     })()
 
     // Members go through the API so we inherit its email-visibility
@@ -244,9 +263,79 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <ResourcesContext.Provider value={{ tags, members, templates, customFields }}>
+    <ResourcesContext.Provider
+      value={{ tags, members, templates, customFields, pipelines, stages }}
+    >
       {children}
     </ResourcesContext.Provider>
+  )
+}
+
+/** Pipeline dropdown, storing the pipeline's id. Falls back to a raw id
+ *  input when no pipelines exist yet. */
+function PipelineSelect({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const { pipelines } = useResources()
+  if (pipelines.length === 0) {
+    return (
+      <Input
+        placeholder="Pipeline id"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="bg-slate-800 text-white"
+      />
+    )
+  }
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
+      <option value="">Select a pipeline…</option>
+      {pipelines.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+/** Stage dropdown scoped to a chosen pipeline, storing the stage's id.
+ *  Falls back to a raw id input when the pipeline has no stages loaded
+ *  (nothing selected yet, or an older deployment without stage data). */
+function StageSelect({
+  pipelineId,
+  value,
+  onChange,
+}: {
+  pipelineId: string
+  value: string
+  onChange: (v: string) => void
+}) {
+  const { stages } = useResources()
+  const scoped = stages.filter((s) => s.pipeline_id === pipelineId)
+  if (!pipelineId || scoped.length === 0) {
+    return (
+      <Input
+        placeholder="Stage id"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="bg-slate-800 text-white"
+      />
+    )
+  }
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
+      <option value="">Select a stage…</option>
+      {scoped.map((s) => (
+        <option key={s.id} value={s.id}>
+          {s.name}
+        </option>
+      ))}
+    </select>
   )
 }
 
@@ -382,17 +471,36 @@ function AgentSelect({
   )
 }
 
+/** Highest `{{n}}` index referenced in a template's body, so the builder
+ *  knows exactly how many variable inputs to render for it. */
+function templateVariableCount(bodyText: string | undefined): number {
+  if (!bodyText) return 0
+  let max = 0
+  for (const m of bodyText.matchAll(/\{\{\s*(\d+)\s*\}\}/g)) {
+    max = Math.max(max, Number(m[1]))
+  }
+  return max
+}
+
 /** Template dropdown showing approved templates by name + language,
- *  storing both template_name and language. Falls back to manual name +
- *  language inputs when no approved templates are synced yet. */
+ *  storing template_name, language, and per-{{n}} variable mapping.
+ *  Falls back to manual name + language inputs (no variable editor —
+ *  there's no body_text to count placeholders from) when no approved
+ *  templates are synced yet. */
 function SendTemplateFields({
   templateName,
   language,
+  variables,
   onChange,
 }: {
   templateName: string
   language: string
-  onChange: (patch: { template_name: string; language: string }) => void
+  variables: Record<string, string>
+  onChange: (patch: {
+    template_name: string
+    language: string
+    variables?: Record<string, string>
+  }) => void
 }) {
   const { templates } = useResources()
 
@@ -425,36 +533,66 @@ function SendTemplateFields({
   // share a name across languages stay distinct.
   const toValue = (name: string, lang: string) => `${name}::${lang}`
   const current = templateName ? toValue(templateName, language) : ""
-  const hasMatch = templates.some(
+  const selected = templates.find(
     (t) => toValue(t.name, t.language ?? "en_US") === current,
   )
+  const varCount = templateVariableCount(selected?.body_text)
 
   return (
-    <FieldBlock label="Template">
-      <select
-        value={current}
-        onChange={(e) => {
-          const [name, lang] = e.target.value.split("::")
-          onChange({ template_name: name ?? "", language: lang ?? "" })
-        }}
-        className={SELECT_CLASS}
-      >
-        <option value="">Select a template…</option>
-        {templates.map((t) => {
-          const lang = t.language ?? "en_US"
-          return (
-            <option key={t.id} value={toValue(t.name, lang)}>
-              {t.name} ({lang})
+    <>
+      <FieldBlock label="Template">
+        <select
+          value={current}
+          onChange={(e) => {
+            const [name, lang] = e.target.value.split("::")
+            onChange({ template_name: name ?? "", language: lang ?? "" })
+          }}
+          className={SELECT_CLASS}
+        >
+          <option value="">Select a template…</option>
+          {templates.map((t) => {
+            const lang = t.language ?? "en_US"
+            return (
+              <option key={t.id} value={toValue(t.name, lang)}>
+                {t.name} ({lang})
+              </option>
+            )
+          })}
+          {current && !selected && (
+            <option value={current}>
+              {templateName} ({language || "unknown"}) — not in approved list
             </option>
-          )
-        })}
-        {current && !hasMatch && (
-          <option value={current}>
-            {templateName} ({language || "unknown"}) — not in approved list
-          </option>
-        )}
-      </select>
-    </FieldBlock>
+          )}
+        </select>
+      </FieldBlock>
+      {varCount > 0 && (
+        <FieldBlock label="Variables">
+          <div className="space-y-2">
+            {Array.from({ length: varCount }, (_, i) => String(i + 1)).map((idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <span className="w-8 shrink-0 text-xs text-slate-500">{`{{${idx}}}`}</span>
+                <Input
+                  value={variables[idx] ?? ""}
+                  onChange={(e) =>
+                    onChange({
+                      template_name: templateName,
+                      language,
+                      variables: { ...variables, [idx]: e.target.value },
+                    })
+                  }
+                  placeholder="{{ contact.name }}"
+                  className="bg-slate-800 text-white"
+                />
+              </div>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Supports {"{{ contact.name }}"}, {"{{ contact.email }}"},{" "}
+            {"{{ contact.company }}"}, {"{{ vars.* }}"}, or plain text.
+          </p>
+        </FieldBlock>
+      )}
+    </>
   )
 }
 
@@ -595,6 +733,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               config={state.trigger_config}
               onTypeChange={(t) => patchTop("trigger_type", t)}
               onConfigChange={(c) => patchTop("trigger_config", c)}
+              automationId={initial.id}
             />
             <StepList
               steps={state.steps}
@@ -622,11 +761,13 @@ function TriggerCard({
   config,
   onTypeChange,
   onConfigChange,
+  automationId,
 }: {
   type: AutomationTriggerType
   config: Record<string, unknown>
   onTypeChange: (t: AutomationTriggerType) => void
   onConfigChange: (c: Record<string, unknown>) => void
+  automationId?: string
 }) {
   const [open, setOpen] = useState(false)
   return (
@@ -700,10 +841,100 @@ function TriggerCard({
                 className="bg-slate-800 text-white"
               />
             )}
+            {type === "deal_stage_changed" && (
+              <DealStageTriggerConfigEditor
+                config={config as unknown as DealStageTriggerConfig}
+                onChange={onConfigChange}
+                automationId={automationId}
+              />
+            )}
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+function DealStageTriggerConfigEditor({
+  config,
+  onChange,
+  automationId,
+}: {
+  config: DealStageTriggerConfig
+  onChange: (c: Record<string, unknown>) => void
+  automationId?: string
+}) {
+  const [backfilling, setBackfilling] = useState(false)
+  const pipelineId = config?.pipeline_id ?? ""
+  const stageId = config?.stage_id ?? ""
+  const mode = config?.mode ?? "both"
+
+  async function handleBackfill() {
+    if (!automationId) return
+    setBackfilling(true)
+    try {
+      const res = await fetch(`/api/automations/${automationId}/backfill`, {
+        method: "POST",
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        toast.error(body?.error ?? "Failed to apply to existing deals")
+        return
+      }
+      toast.success(`Ran automation for ${body.processed} existing deal(s)`)
+    } finally {
+      setBackfilling(false)
+    }
+  }
+
+  return (
+    <>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-slate-400">Pipeline</label>
+        <PipelineSelect
+          value={pipelineId}
+          onChange={(v) => onChange({ ...config, pipeline_id: v, stage_id: "" })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-slate-400">Stage</label>
+        <StageSelect
+          pipelineId={pipelineId}
+          value={stageId}
+          onChange={(v) => onChange({ ...config, stage_id: v })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-slate-400">When</label>
+        <select
+          value={mode}
+          onChange={(e) => onChange({ ...config, mode: e.target.value })}
+          className={SELECT_CLASS}
+        >
+          <option value="created">Deal is created in this stage</option>
+          <option value="moved">Deal is moved into this stage</option>
+          <option value="both">Deal is created or moved into this stage</option>
+        </select>
+      </div>
+      <div className="border-t border-slate-800 pt-3">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={handleBackfill}
+          disabled={!automationId || !pipelineId || !stageId || backfilling}
+          className="w-full"
+        >
+          {backfilling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+          Apply to deals already in this stage
+        </Button>
+        <p className="mt-1 text-[11px] text-slate-500">
+          {automationId
+            ? "Runs this automation once, right now, for every deal already sitting in that stage."
+            : "Save this automation first to enable this."}
+        </p>
+      </div>
+    </>
   )
 }
 
@@ -846,12 +1077,15 @@ function StepRenderer({
   const Icon = meta.icon
   const expanded = props.expandedId === step.cid
   const isCondition = step.step_type === "condition"
-  // Card widths on mobile fill the full canvas column (max-w-2xl px-4
-  // still keeps them reasonable). On sm+ the original fixed widths
-  // come back so the flow visual stays recognisable.
-  const width = isCondition
-    ? "w-full max-w-[400px] sm:w-[400px]"
-    : "w-full max-w-[320px] sm:w-80"
+  // Always fill the available column width, capped by max-w. A fixed
+  // `sm:w-80`/`sm:w-[400px]` used to override this on desktop — fine for
+  // a top-level card (its column is the full canvas), but a condition
+  // nested inside a Yes/No branch sits in a column that's already been
+  // halved by ConditionBranches' grid, and halved again for every level
+  // nested below that. Forcing a fixed width there made the card wider
+  // than its column, so a chain of 2+ nested conditions (any tag_presence
+  // if/else-if/else) rendered as overlapping cards instead of a tree.
+  const width = isCondition ? "w-full max-w-[400px]" : "w-full max-w-[320px]"
 
   return (
     <>
@@ -1050,6 +1284,7 @@ function StepEditor({
         <SendTemplateFields
           templateName={(cfg.template_name as string) ?? ""}
           language={(cfg.language as string) ?? ""}
+          variables={(cfg.variables as Record<string, string>) ?? {}}
           onChange={(patch) => set(patch)}
         />
       )
@@ -1437,7 +1672,19 @@ function moveInBranches(
     ;[copy[i], copy[j]] = [copy[j], copy[i]]
     return copy
   }
-  const next = rest.length === 0 ? swap(bucket, head.index) : bucket
+  // When there's more path left, the target isn't a direct child of this
+  // branch — descend into it (mirrors walkBranches/removeFromBranches).
+  // This was previously a no-op past one level of nesting: any condition
+  // nested two-plus branches deep (e.g. a chain of tag_presence checks)
+  // silently failed to move at all.
+  const next =
+    rest.length === 0
+      ? swap(bucket, head.index)
+      : bucket.map((child, i) =>
+          i !== head.index
+            ? child
+            : { ...child, branches: moveInBranches(child.branches, rest, direction) },
+        )
   return { ...branches, [head.branch]: next }
 }
 
