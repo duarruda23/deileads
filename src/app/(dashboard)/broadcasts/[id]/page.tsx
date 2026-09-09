@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast, BroadcastRecipient, RecipientStatus } from '@/types';
@@ -38,6 +38,7 @@ import {
   getBroadcastStatus,
   getRecipientStatus,
 } from '@/lib/broadcast-status';
+import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
 
 interface StatCardProps {
   label: string;
@@ -155,38 +156,51 @@ export default function BroadcastDetailPage() {
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmSend, setConfirmSend] = useState(false);
+  const { sendDraftBroadcast, isProcessing, progress } = useBroadcastSending();
+
+  const fetchData = useCallback(async () => {
+    try {
+      const supabase = createClient();
+
+      const { data: bc, error: bcError } = await supabase
+        .from('broadcasts')
+        .select('*')
+        .eq('id', broadcastId)
+        .single();
+
+      if (bcError) throw bcError;
+      setBroadcast(bc);
+
+      const { data: recs, error: recsError } = await supabase
+        .from('broadcast_recipients')
+        .select('*, contact:contacts(*)')
+        .eq('broadcast_id', broadcastId)
+        .order('created_at', { ascending: false });
+
+      if (recsError) throw recsError;
+      setRecipients(recs ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load broadcast');
+    } finally {
+      setLoading(false);
+    }
+  }, [broadcastId]);
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const supabase = createClient();
-
-        const { data: bc, error: bcError } = await supabase
-          .from('broadcasts')
-          .select('*')
-          .eq('id', broadcastId)
-          .single();
-
-        if (bcError) throw bcError;
-        setBroadcast(bc);
-
-        const { data: recs, error: recsError } = await supabase
-          .from('broadcast_recipients')
-          .select('*, contact:contacts(*)')
-          .eq('broadcast_id', broadcastId)
-          .order('created_at', { ascending: false });
-
-        if (recsError) throw recsError;
-        setRecipients(recs ?? []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load broadcast');
-      } finally {
-        setLoading(false);
-      }
-    }
-
     fetchData();
-  }, [broadcastId]);
+  }, [fetchData]);
+
+  async function handleSend() {
+    setConfirmSend(false);
+    try {
+      await sendDraftBroadcast(broadcastId);
+      toast.success('Broadcast sent');
+      await fetchData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send broadcast');
+    }
+  }
 
   const filteredRecipients = useMemo(
     () =>
@@ -303,48 +317,89 @@ export default function BroadcastDetailPage() {
           </div>
         </div>
 
-        {/* Delete — inline-confirm pattern matches the pipeline-settings
-            "Delete Pipeline" flow. Mid-send broadcasts can't be deleted
-            because orphaning in-flight Meta messages would leave the
-            funnel inconsistent. */}
-        {confirmDelete ? (
-          <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm">
-            <span className="text-red-300">Delete this broadcast?</span>
+        <div className="flex items-center gap-2">
+          {/* Send Now — the wizard's "Save Draft" step wrote the row but
+              gave no way to ever actually send it afterwards. Only shown
+              for status === 'draft'; a resumed draft re-resolves its
+              audience_filter fresh (it may have grown/shrunk since the
+              draft was saved) and reuses the same send loop as a fresh
+              broadcast. */}
+          {broadcast.status === 'draft' &&
+            (confirmSend ? (
+              <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm">
+                <span className="text-primary">Send this broadcast now?</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmSend(false)}
+                  disabled={isProcessing}
+                  className="h-7 border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSend}
+                  disabled={isProcessing}
+                  className="h-7 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {isProcessing ? `Sending… ${progress}%` : 'Confirm'}
+                </Button>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                onClick={() => setConfirmSend(true)}
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                <Send className="h-3.5 w-3.5" />
+                Send Now
+              </Button>
+            ))}
+
+          {/* Delete — inline-confirm pattern matches the pipeline-settings
+              "Delete Pipeline" flow. Mid-send broadcasts can't be deleted
+              because orphaning in-flight Meta messages would leave the
+              funnel inconsistent. */}
+          {confirmDelete ? (
+            <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm">
+              <span className="text-red-300">Delete this broadcast?</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+                className="h-7 border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="h-7 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? 'Deleting…' : 'Confirm'}
+              </Button>
+            </div>
+          ) : (
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setConfirmDelete(false)}
-              disabled={deleting}
-              className="h-7 border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800"
+              disabled={broadcast.status === 'sending'}
+              onClick={() => setConfirmDelete(true)}
+              title={
+                broadcast.status === 'sending'
+                  ? 'Cannot delete while a broadcast is actively sending'
+                  : 'Delete this broadcast'
+              }
+              className="border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10 disabled:opacity-40"
             >
-              Cancel
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
             </Button>
-            <Button
-              size="sm"
-              onClick={handleDelete}
-              disabled={deleting}
-              className="h-7 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-            >
-              {deleting ? 'Deleting…' : 'Confirm'}
-            </Button>
-          </div>
-        ) : (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={broadcast.status === 'sending'}
-            onClick={() => setConfirmDelete(true)}
-            title={
-              broadcast.status === 'sending'
-                ? 'Cannot delete while a broadcast is actively sending'
-                : 'Delete this broadcast'
-            }
-            className="border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10 disabled:opacity-40"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </Button>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Stats — 6 cards: Total / Sent / Delivered / Read / Replied / Failed */}
