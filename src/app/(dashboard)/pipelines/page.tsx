@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useDocumentTitle } from "@/hooks/use-document-title";
 import { dispatchDealStageEvent } from "@/lib/automations/dispatch-client";
-import type { Pipeline, PipelineStage, Deal } from "@/types";
+import type { Pipeline, PipelineStage, Deal, Tag as TagRecord } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
 import { DealForm } from "@/components/pipelines/deal-form";
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -26,11 +27,30 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings, Users } from "lucide-react";
+import {
+  GitBranch,
+  Plus,
+  ChevronDown,
+  Settings,
+  Users,
+  Search,
+  Filter,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
 import { GatedButton } from "@/components/ui/gated-button";
+
+const SOURCE_LABELS: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  site_form: "Site Form",
+  meta_leadgen: "Meta Lead Ads",
+  hotmart: "Hotmart",
+  manual: "Manual",
+  import: "Imported",
+};
 
 // Pipeline creation is admin-class (settings-tier write under
 // the new RLS); deal creation is operational and only requires
@@ -65,6 +85,17 @@ export default function PipelinesPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [poolCount, setPoolCount] = useState(0);
+
+  // Filters — applied client-side over the already-loaded deals for the
+  // selected pipeline (no pagination here, so no extra round-trip per
+  // filter change). Tags aren't included in the deals query itself, so
+  // they're fetched separately and looked up by contact_id.
+  const [tags, setTags] = useState<TagRecord[]>([]);
+  const [tagsByContact, setTagsByContact] = useState<Record<string, string[]>>({});
+  const [filterSearch, setFilterSearch] = useState("");
+  const [filterTagIds, setFilterTagIds] = useState<Set<string>>(new Set());
+  const [filterAssignedTo, setFilterAssignedTo] = useState<string>("");
+  const [filterSource, setFilterSource] = useState<string>("");
 
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
@@ -110,6 +141,27 @@ export default function PipelinesPage() {
         .eq("pipeline_id", pipelineId)
         .order("created_at", { ascending: false });
       return (data ?? []) as Deal[];
+    },
+    [supabase],
+  );
+
+  const loadTags = useCallback(async () => {
+    const { data } = await supabase.from("tags").select("*").order("name");
+    return (data ?? []) as TagRecord[];
+  }, [supabase]);
+
+  const loadTagsByContact = useCallback(
+    async (contactIds: string[]) => {
+      if (contactIds.length === 0) return {};
+      const { data } = await supabase
+        .from("contact_tags")
+        .select("contact_id, tag_id")
+        .in("contact_id", contactIds);
+      const map: Record<string, string[]> = {};
+      for (const row of data ?? []) {
+        (map[row.contact_id] ??= []).push(row.tag_id);
+      }
+      return map;
     },
     [supabase],
   );
@@ -163,16 +215,21 @@ export default function PipelinesPage() {
     loadPoolCount();
   }, [loadPoolCount]);
 
+  useEffect(() => {
+    (async () => {
+      setTags(await loadTags());
+    })();
+  }, [loadTags]);
+
   // Load stages + deals whenever selected pipeline changes.
   // Clearing on no-selection is a legitimate sync with URL/prop
   // state; the load completion uses async setters inside promise
   // callbacks (not synchronous in the effect body).
   useEffect(() => {
     if (!selectedPipelineId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStages([]);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDeals([]);
+      setTagsByContact({});
       return;
     }
     let cancelled = false;
@@ -184,11 +241,14 @@ export default function PipelinesPage() {
       if (cancelled) return;
       setStages(s);
       setDeals(d);
+      const contactIds = [...new Set(d.map((x) => x.contact_id).filter(Boolean))] as string[];
+      const tbc = await loadTagsByContact(contactIds);
+      if (!cancelled) setTagsByContact(tbc);
     })();
     return () => {
       cancelled = true;
     };
-  }, [selectedPipelineId, loadStages, loadDeals]);
+  }, [selectedPipelineId, loadStages, loadDeals, loadTagsByContact]);
 
   const refreshPipelines = useCallback(async () => {
     const list = await loadPipelines();
@@ -205,8 +265,11 @@ export default function PipelinesPage() {
 
   const refreshDeals = useCallback(async () => {
     if (!selectedPipelineId) return;
-    setDeals(await loadDeals(selectedPipelineId));
-  }, [loadDeals, selectedPipelineId]);
+    const d = await loadDeals(selectedPipelineId);
+    setDeals(d);
+    const contactIds = [...new Set(d.map((x) => x.contact_id).filter(Boolean))] as string[];
+    setTagsByContact(await loadTagsByContact(contactIds));
+  }, [loadDeals, loadTagsByContact, selectedPipelineId]);
 
   const handleDealMoved = useCallback(
     async (dealId: string, newStageId: string) => {
@@ -302,6 +365,58 @@ export default function PipelinesPage() {
   }
 
   const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);
+
+  // Distinct assignees among the currently loaded deals — pulled from
+  // the deals themselves rather than a full member-list fetch, so an
+  // account with no assignments yet just shows nothing to filter by.
+  const assignedToOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const d of deals) {
+      if (d.assigned_to && d.assignee) {
+        seen.set(d.assigned_to, d.assignee.full_name || d.assignee.email || d.assigned_to);
+      }
+    }
+    return [...seen.entries()];
+  }, [deals]);
+
+  const filteredDeals = useMemo(() => {
+    const query = filterSearch.trim().toLowerCase();
+    return deals.filter((d) => {
+      if (filterSource && d.source !== filterSource) return false;
+      if (filterAssignedTo && d.assigned_to !== filterAssignedTo) return false;
+      if (filterTagIds.size > 0) {
+        const dealTagIds = d.contact_id ? tagsByContact[d.contact_id] ?? [] : [];
+        if (!dealTagIds.some((id) => filterTagIds.has(id))) return false;
+      }
+      if (query) {
+        const haystack = `${d.title} ${d.contact?.name ?? ""} ${d.contact?.phone ?? ""}`.toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
+      return true;
+    });
+  }, [deals, filterSource, filterAssignedTo, filterTagIds, filterSearch, tagsByContact]);
+
+  const activeFilterCount =
+    (filterSearch.trim() ? 1 : 0) +
+    (filterAssignedTo ? 1 : 0) +
+    (filterSource ? 1 : 0) +
+    filterTagIds.size;
+
+  function toggleFilterTag(tagId: string) {
+    setFilterTagIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(tagId)) next.delete(tagId);
+      else next.add(tagId);
+      return next;
+    });
+  }
+
+  function clearFilters() {
+    setFilterSearch("");
+    setFilterTagIds(new Set());
+    setFilterAssignedTo("");
+    setFilterSource("");
+  }
 
   if (loading) {
     return (
@@ -427,10 +542,97 @@ export default function PipelinesPage() {
         </div>
       ) : (
         <>
-          <PipelineAnalytics stages={stages} deals={deals} />
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <Input
+                value={filterSearch}
+                onChange={(e) => setFilterSearch(e.target.value)}
+                placeholder="Search deals or contacts…"
+                className="bg-slate-900 border-slate-700 pl-8 text-white placeholder:text-slate-500"
+              />
+            </div>
+
+            {tags.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 transition-colors data-[popup-open]:bg-slate-800">
+                  <Filter className="h-3.5 w-3.5" />
+                  Tags
+                  {filterTagIds.size > 0 && (
+                    <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                      {filterTagIds.size}
+                    </span>
+                  )}
+                  <ChevronDown className="h-4 w-4 text-slate-400" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="w-56 border-slate-700 bg-slate-900 text-slate-200"
+                >
+                  {tags.map((t) => (
+                    <DropdownMenuCheckboxItem
+                      key={t.id}
+                      checked={filterTagIds.has(t.id)}
+                      onCheckedChange={() => toggleFilterTag(t.id)}
+                    >
+                      <span
+                        className="mr-1.5 h-2.5 w-2.5 shrink-0 rounded-full border border-slate-600"
+                        style={{ backgroundColor: t.color }}
+                        aria-hidden
+                      />
+                      {t.name}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
+            {assignedToOptions.length > 0 && (
+              <select
+                value={filterAssignedTo}
+                onChange={(e) => setFilterAssignedTo(e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+              >
+                <option value="">Assigned to: All</option>
+                {assignedToOptions.map(([id, label]) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <select
+              value={filterSource}
+              onChange={(e) => setFilterSource(e.target.value)}
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            >
+              <option value="">Source: All</option>
+              {Object.entries(SOURCE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+
+            {activeFilterCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearFilters}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="h-3.5 w-3.5" />
+                Clear filters ({activeFilterCount})
+              </Button>
+            )}
+          </div>
+
+          <PipelineAnalytics stages={stages} deals={filteredDeals} />
           <PipelineBoard
             stages={stages}
-            deals={deals}
+            deals={filteredDeals}
             onDealMoved={handleDealMoved}
             onAddDeal={handleAddDeal}
             onEditDeal={handleEditDeal}
