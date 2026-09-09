@@ -31,6 +31,7 @@ interface Step3Props {
 
 const contactFields = [
   { value: 'name', label: 'Contact Name' },
+  { value: 'first_name', label: 'Contact First Name' },
   { value: 'phone', label: 'Phone Number' },
   { value: 'email', label: 'Email Address' },
   { value: 'company', label: 'Company' },
@@ -160,6 +161,7 @@ export function Step3Personalize({
         } else if (mapping.type === 'field' && mapping.value) {
           const fieldMap: Record<string, string | undefined> = {
             name: contact.name,
+            first_name: contact.name?.trim().split(/\s+/)[0],
             phone: contact.phone ?? undefined,
             email: contact.email,
             company: contact.company,

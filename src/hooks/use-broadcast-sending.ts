@@ -98,6 +98,7 @@ export function resolveVariables(
     if (v.type === 'field') {
       const fieldMap: Record<string, string | undefined> = {
         name: contact.name,
+        first_name: contact.name?.trim().split(/\s+/)[0],
         phone: contact.phone ?? undefined,
         email: contact.email,
         company: contact.company,
