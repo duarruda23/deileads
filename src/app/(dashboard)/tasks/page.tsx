@@ -164,6 +164,8 @@ export default function TasksPage() {
     fetchTasks();
   }
 
+  // Bucketing por "agora" precisa ler o relógio a cada render — intencional.
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
 
   function dueBucket(task: TaskWithRelations): "overdue" | "today" | "upcoming" | "none" {
