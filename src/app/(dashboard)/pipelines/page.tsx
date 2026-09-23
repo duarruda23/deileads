@@ -1,22 +1,22 @@
-"use client";
+'use client';
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { useDocumentTitle } from "@/hooks/use-document-title";
-import { dispatchDealStageEvent } from "@/lib/automations/dispatch-client";
-import type { Pipeline, PipelineStage, Deal, Tag as TagRecord } from "@/types";
-import { PipelineBoard } from "@/components/pipelines/pipeline-board";
-import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
-import { DealForm } from "@/components/pipelines/deal-form";
-import { PipelineAnalytics } from "@/components/pipelines/pipeline-analytics";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import { useDocumentTitle } from '@/hooks/use-document-title';
+import { dispatchDealStageEvent } from '@/lib/automations/dispatch-client';
+import type { Pipeline, PipelineStage, Deal, Tag as TagRecord } from '@/types';
+import { PipelineBoard } from '@/components/pipelines/pipeline-board';
+import { PipelineSettings } from '@/components/pipelines/pipeline-settings';
+import { DealForm } from '@/components/pipelines/deal-form';
+import { PipelineAnalytics } from '@/components/pipelines/pipeline-analytics';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from "@/components/ui/dialog";
+} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -24,9 +24,9 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   GitBranch,
   Plus,
@@ -36,20 +36,20 @@ import {
   Search,
   Filter,
   X,
-} from "lucide-react";
-import { toast } from "sonner";
-import { useCan } from "@/hooks/use-can";
-import { useAuth } from "@/hooks/use-auth";
-import { GatedButton } from "@/components/ui/gated-button";
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
+import { GatedButton } from '@/components/ui/gated-button';
 
 const SOURCE_LABELS: Record<string, string> = {
-  whatsapp: "WhatsApp",
-  instagram: "Instagram",
-  site_form: "Site Form",
-  meta_leadgen: "Meta Lead Ads",
-  hotmart: "Hotmart",
-  manual: "Manual",
-  import: "Imported",
+  whatsapp: 'WhatsApp',
+  instagram: 'Instagram',
+  site_form: 'Site Form',
+  meta_leadgen: 'Meta Lead Ads',
+  hotmart: 'Hotmart',
+  manual: 'Manual',
+  import: 'Imported',
 };
 
 // Pipeline creation is admin-class (settings-tier write under
@@ -65,22 +65,27 @@ const SOURCE_LABELS: Record<string, string> = {
 // never set stage_type at all (silently defaulting to 'open'), which
 // meant a pipeline created here could never mark a deal as won.
 const SPEC_DEFAULT_STAGES = [
-  { name: "Novo Lead", color: "#3b82f6", stage_type: "open", position: 0 }, // blue
-  { name: "Em Contato", color: "#eab308", stage_type: "open", position: 1 }, // yellow
-  { name: "Qualificado", color: "#f97316", stage_type: "open", position: 2 }, // orange
-  { name: "Fechado Ganho", color: "#22c55e", stage_type: "won", position: 3 }, // green
-  { name: "Fechado Perdido", color: "#ef4444", stage_type: "lost", position: 4 }, // red
+  { name: 'Novo Lead', color: '#3b82f6', stage_type: 'open', position: 0 }, // blue
+  { name: 'Em Contato', color: '#eab308', stage_type: 'open', position: 1 }, // yellow
+  { name: 'Qualificado', color: '#f97316', stage_type: 'open', position: 2 }, // orange
+  { name: 'Fechado Ganho', color: '#22c55e', stage_type: 'won', position: 3 }, // green
+  {
+    name: 'Fechado Perdido',
+    color: '#ef4444',
+    stage_type: 'lost',
+    position: 4,
+  }, // red
 ];
 
 export default function PipelinesPage() {
-  useDocumentTitle("Pipelines");
+  useDocumentTitle('Pipelines');
   const supabase = createClient();
-  const canEditSettings = useCan("edit-settings");
-  const canCreateDeals = useCan("send-messages");
+  const canEditSettings = useCan('edit-settings');
+  const canCreateDeals = useCan('send-messages');
   const { accountId } = useAuth();
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
-  const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string>('');
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,15 +96,17 @@ export default function PipelinesPage() {
   // filter change). Tags aren't included in the deals query itself, so
   // they're fetched separately and looked up by contact_id.
   const [tags, setTags] = useState<TagRecord[]>([]);
-  const [tagsByContact, setTagsByContact] = useState<Record<string, string[]>>({});
-  const [filterSearch, setFilterSearch] = useState("");
+  const [tagsByContact, setTagsByContact] = useState<Record<string, string[]>>(
+    {}
+  );
+  const [filterSearch, setFilterSearch] = useState('');
   const [filterTagIds, setFilterTagIds] = useState<Set<string>>(new Set());
-  const [filterAssignedTo, setFilterAssignedTo] = useState<string>("");
-  const [filterSource, setFilterSource] = useState<string>("");
+  const [filterAssignedTo, setFilterAssignedTo] = useState<string>('');
+  const [filterSource, setFilterSource] = useState<string>('');
 
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
-  const [newPipelineName, setNewPipelineName] = useState("");
+  const [newPipelineName, setNewPipelineName] = useState('');
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -107,15 +114,15 @@ export default function PipelinesPage() {
   // the per-column "+" trigger the same Sheet.
   const [dealFormOpen, setDealFormOpen] = useState(false);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
-  const [defaultStageId, setDefaultStageId] = useState<string>("");
+  const [defaultStageId, setDefaultStageId] = useState<string>('');
 
   const loadPipelines = useCallback(async () => {
     const { data, error } = await supabase
-      .from("pipelines")
-      .select("*")
-      .order("created_at");
+      .from('pipelines')
+      .select('*')
+      .order('created_at');
     if (error) {
-      console.error("Failed to load pipelines:", error.message);
+      console.error('Failed to load pipelines:', error.message);
       return [];
     }
     return data ?? [];
@@ -124,46 +131,59 @@ export default function PipelinesPage() {
   const loadStages = useCallback(
     async (pipelineId: string) => {
       const { data } = await supabase
-        .from("pipeline_stages")
-        .select("*")
-        .eq("pipeline_id", pipelineId)
-        .order("position");
+        .from('pipeline_stages')
+        .select('*')
+        .eq('pipeline_id', pipelineId)
+        .order('position');
       return data ?? [];
     },
-    [supabase],
+    [supabase]
   );
 
   const loadDeals = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
-        .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
-        .eq("pipeline_id", pipelineId)
-        .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+      const result: Deal[] = [];
+      for (let from = 0; ; from += 500) {
+        const { data, error } = await supabase
+          .from('deals')
+          .select(
+            '*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)'
+          )
+          .eq('pipeline_id', pipelineId)
+          .order('created_at', { ascending: false })
+          .range(from, from + 499);
+        if (error) {
+          toast.error('Falha ao carregar negócios');
+          break;
+        }
+        result.push(...((data ?? []) as Deal[]));
+        if (!data || data.length < 500) break;
+      }
+      return result;
     },
-    [supabase],
+    [supabase]
   );
 
   const loadTags = useCallback(async () => {
-    const { data } = await supabase.from("tags").select("*").order("name");
+    const { data } = await supabase.from('tags').select('*').order('name');
     return (data ?? []) as TagRecord[];
   }, [supabase]);
 
   const loadTagsByContact = useCallback(
     async (contactIds: string[]) => {
       if (contactIds.length === 0) return {};
-      const { data } = await supabase
-        .from("contact_tags")
-        .select("contact_id, tag_id")
-        .in("contact_id", contactIds);
       const map: Record<string, string[]> = {};
-      for (const row of data ?? []) {
-        (map[row.contact_id] ??= []).push(row.tag_id);
+      for (let i = 0; i < contactIds.length; i += 200) {
+        const { data } = await supabase
+          .from('contact_tags')
+          .select('contact_id, tag_id')
+          .in('contact_id', contactIds.slice(i, i + 200));
+        for (const row of data ?? [])
+          (map[row.contact_id] ??= []).push(row.tag_id);
       }
       return map;
     },
-    [supabase],
+    [supabase]
   );
 
   // Caça-leads: same unowned-contacts count shown on /contacts, surfaced
@@ -172,9 +192,9 @@ export default function PipelinesPage() {
   // when the feature was designed, which only ever landed on Contacts.
   const loadPoolCount = useCallback(async () => {
     const { count } = await supabase
-      .from("contacts")
-      .select("id", { count: "exact", head: true })
-      .is("owner_id", null);
+      .from('contacts')
+      .select('id', { count: 'exact', head: true })
+      .is('owner_id', null);
     setPoolCount(count ?? 0);
   }, [supabase]);
 
@@ -199,10 +219,10 @@ export default function PipelinesPage() {
       setPipelines(list);
       if (list.length > 0) {
         setSelectedPipelineId((prev) =>
-          prev && list.some((p) => p.id === prev) ? prev : list[0].id,
+          prev && list.some((p) => p.id === prev) ? prev : list[0].id
         );
       } else {
-        setSelectedPipelineId("");
+        setSelectedPipelineId('');
       }
       setLoading(false);
     })();
@@ -241,7 +261,9 @@ export default function PipelinesPage() {
       if (cancelled) return;
       setStages(s);
       setDeals(d);
-      const contactIds = [...new Set(d.map((x) => x.contact_id).filter(Boolean))] as string[];
+      const contactIds = [
+        ...new Set(d.map((x) => x.contact_id).filter(Boolean)),
+      ] as string[];
       const tbc = await loadTagsByContact(contactIds);
       if (!cancelled) setTagsByContact(tbc);
     })();
@@ -253,7 +275,7 @@ export default function PipelinesPage() {
   const refreshPipelines = useCallback(async () => {
     const list = await loadPipelines();
     setPipelines(list);
-    if (list.length === 0) setSelectedPipelineId("");
+    if (list.length === 0) setSelectedPipelineId('');
     else if (!list.some((p) => p.id === selectedPipelineId))
       setSelectedPipelineId(list[0].id);
   }, [loadPipelines, selectedPipelineId]);
@@ -267,7 +289,9 @@ export default function PipelinesPage() {
     if (!selectedPipelineId) return;
     const d = await loadDeals(selectedPipelineId);
     setDeals(d);
-    const contactIds = [...new Set(d.map((x) => x.contact_id).filter(Boolean))] as string[];
+    const contactIds = [
+      ...new Set(d.map((x) => x.contact_id).filter(Boolean)),
+    ] as string[];
     setTagsByContact(await loadTagsByContact(contactIds));
   }, [loadDeals, loadTagsByContact, selectedPipelineId]);
 
@@ -276,14 +300,14 @@ export default function PipelinesPage() {
       const moved = deals.find((d) => d.id === dealId);
       // Optimistic update — board already animated; just persist.
       setDeals((prev) =>
-        prev.map((d) => (d.id === dealId ? { ...d, stage_id: newStageId } : d)),
+        prev.map((d) => (d.id === dealId ? { ...d, stage_id: newStageId } : d))
       );
       const { error } = await supabase
-        .from("deals")
+        .from('deals')
         .update({ stage_id: newStageId })
-        .eq("id", dealId);
+        .eq('id', dealId);
       if (error) {
-        toast.error("Failed to move deal");
+        toast.error('Failed to move deal');
         refreshDeals();
         return;
       }
@@ -293,20 +317,20 @@ export default function PipelinesPage() {
           dealId,
           pipelineId: moved.pipeline_id,
           stageId: newStageId,
-          event: "moved",
+          event: 'moved',
         });
       }
     },
-    [supabase, refreshDeals, deals],
+    [supabase, refreshDeals, deals]
   );
 
   const handleAddDeal = useCallback(
     (stageId?: string) => {
       setEditingDeal(null);
-      setDefaultStageId(stageId ?? stages[0]?.id ?? "");
+      setDefaultStageId(stageId ?? stages[0]?.id ?? '');
       setDealFormOpen(true);
     },
-    [stages],
+    [stages]
   );
 
   const handleEditDeal = useCallback((deal: Deal) => {
@@ -330,19 +354,19 @@ export default function PipelinesPage() {
     }
     // pipelines.account_id is NOT NULL post-017 with no DB default.
     if (!accountId) {
-      toast.error("Your profile is not linked to an account.");
+      toast.error('Your profile is not linked to an account.');
       setCreating(false);
       return;
     }
 
     const { data: pipeline, error } = await supabase
-      .from("pipelines")
+      .from('pipelines')
       .insert({ user_id: user.id, account_id: accountId, name })
       .select()
       .single();
 
     if (error || !pipeline) {
-      toast.error("Failed to create pipeline");
+      toast.error('Failed to create pipeline');
       setCreating(false);
       return;
     }
@@ -354,14 +378,14 @@ export default function PipelinesPage() {
       stage_type: s.stage_type,
       position: s.position,
     }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
+    await supabase.from('pipeline_stages').insert(stagesPayload);
 
-    setNewPipelineName("");
+    setNewPipelineName('');
     setNewPipelineOpen(false);
     setSelectedPipelineId(pipeline.id);
     await refreshPipelines();
     setCreating(false);
-    toast.success("Pipeline created");
+    toast.success('Pipeline created');
   }
 
   const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);
@@ -373,7 +397,10 @@ export default function PipelinesPage() {
     const seen = new Map<string, string>();
     for (const d of deals) {
       if (d.assigned_to && d.assignee) {
-        seen.set(d.assigned_to, d.assignee.full_name || d.assignee.email || d.assigned_to);
+        seen.set(
+          d.assigned_to,
+          d.assignee.full_name || d.assignee.email || d.assigned_to
+        );
       }
     }
     return [...seen.entries()];
@@ -385,16 +412,26 @@ export default function PipelinesPage() {
       if (filterSource && d.source !== filterSource) return false;
       if (filterAssignedTo && d.assigned_to !== filterAssignedTo) return false;
       if (filterTagIds.size > 0) {
-        const dealTagIds = d.contact_id ? tagsByContact[d.contact_id] ?? [] : [];
+        const dealTagIds = d.contact_id
+          ? (tagsByContact[d.contact_id] ?? [])
+          : [];
         if (!dealTagIds.some((id) => filterTagIds.has(id))) return false;
       }
       if (query) {
-        const haystack = `${d.title} ${d.contact?.name ?? ""} ${d.contact?.phone ?? ""}`.toLowerCase();
+        const haystack =
+          `${d.title} ${d.contact?.name ?? ''} ${d.contact?.phone ?? ''}`.toLowerCase();
         if (!haystack.includes(query)) return false;
       }
       return true;
     });
-  }, [deals, filterSource, filterAssignedTo, filterTagIds, filterSearch, tagsByContact]);
+  }, [
+    deals,
+    filterSource,
+    filterAssignedTo,
+    filterTagIds,
+    filterSearch,
+    tagsByContact,
+  ]);
 
   const activeFilterCount =
     (filterSearch.trim() ? 1 : 0) +
@@ -412,10 +449,10 @@ export default function PipelinesPage() {
   }
 
   function clearFilters() {
-    setFilterSearch("");
+    setFilterSearch('');
     setFilterTagIds(new Set());
-    setFilterAssignedTo("");
-    setFilterSource("");
+    setFilterAssignedTo('');
+    setFilterSource('');
   }
 
   if (loading) {
@@ -427,7 +464,10 @@ export default function PipelinesPage() {
         </div>
         <div className="flex gap-3">
           {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-96 w-72 animate-pulse rounded-xl bg-slate-800/50" />
+            <div
+              key={i}
+              className="h-96 w-72 animate-pulse rounded-xl bg-slate-800/50"
+            />
           ))}
         </div>
       </div>
@@ -441,12 +481,10 @@ export default function PipelinesPage() {
         <div className="flex items-center gap-3">
           {/* Pipeline selector dropdown */}
           <DropdownMenu>
-            <DropdownMenuTrigger
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800 transition-colors data-[popup-open]:bg-slate-800"
-            >
-              <GitBranch className="h-4 w-4 text-primary" />
+            <DropdownMenuTrigger className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white transition-colors hover:bg-slate-800 data-[popup-open]:bg-slate-800">
+              <GitBranch className="text-primary h-4 w-4" />
               <span className="font-semibold">
-                {selectedPipeline?.name ?? "Select Pipeline"}
+                {selectedPipeline?.name ?? 'Select Pipeline'}
               </span>
               <ChevronDown className="h-4 w-4 text-slate-400" />
             </DropdownMenuTrigger>
@@ -465,8 +503,8 @@ export default function PipelinesPage() {
                   onClick={() => setSelectedPipelineId(p.id)}
                   className={
                     p.id === selectedPipelineId
-                      ? "text-primary"
-                      : "text-slate-300"
+                      ? 'text-primary'
+                      : 'text-slate-300'
                   }
                 >
                   <GitBranch className="mr-2 h-3.5 w-3.5" />
@@ -488,7 +526,7 @@ export default function PipelinesPage() {
 
           <a
             href="/contacts?pool=1"
-            className="inline-flex items-center gap-2 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-300 hover:bg-amber-950/50 transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-300 transition-colors hover:bg-amber-950/50"
           >
             <Users className="h-4 w-4" />
             <span className="font-semibold">{poolCount}</span>
@@ -534,7 +572,7 @@ export default function PipelinesPage() {
             canAct={canEditSettings}
             gateReason="create pipelines"
             onClick={() => setNewPipelineOpen(true)}
-            className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 mt-4"
           >
             <Plus className="mr-1 h-4 w-4" />
             Create Pipeline
@@ -545,22 +583,22 @@ export default function PipelinesPage() {
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full sm:w-64">
-              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <Search className="absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-slate-500" />
               <Input
                 value={filterSearch}
                 onChange={(e) => setFilterSearch(e.target.value)}
                 placeholder="Search deals or contacts…"
-                className="bg-slate-900 border-slate-700 pl-8 text-white placeholder:text-slate-500"
+                className="border-slate-700 bg-slate-900 pl-8 text-white placeholder:text-slate-500"
               />
             </div>
 
             {tags.length > 0 && (
               <DropdownMenu>
-                <DropdownMenuTrigger className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 transition-colors data-[popup-open]:bg-slate-800">
+                <DropdownMenuTrigger className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 transition-colors hover:bg-slate-800 data-[popup-open]:bg-slate-800">
                   <Filter className="h-3.5 w-3.5" />
                   Tags
                   {filterTagIds.size > 0 && (
-                    <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                    <span className="bg-primary text-primary-foreground rounded-full px-1.5 text-xs">
                       {filterTagIds.size}
                     </span>
                   )}
@@ -642,7 +680,7 @@ export default function PipelinesPage() {
 
       {/* New Pipeline Dialog */}
       <Dialog open={newPipelineOpen} onOpenChange={setNewPipelineOpen}>
-        <DialogContent className="sm:max-w-sm bg-slate-900 border-slate-700">
+        <DialogContent className="border-slate-700 bg-slate-900 sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-white">New Pipeline</DialogTitle>
           </DialogHeader>
@@ -652,16 +690,17 @@ export default function PipelinesPage() {
               value={newPipelineName}
               onChange={(e) => setNewPipelineName(e.target.value)}
               placeholder="e.g., Enterprise Sales"
-              className="mt-2 bg-slate-800 border-slate-700 text-white"
+              className="mt-2 border-slate-700 bg-slate-800 text-white"
               onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreatePipeline();
+                if (e.key === 'Enter') handleCreatePipeline();
               }}
             />
             <p className="mt-2 text-xs text-slate-400">
-              As etapas padrão (Novo Lead → Fechado Ganho/Perdido) serão criadas automaticamente.
+              As etapas padrão (Novo Lead → Fechado Ganho/Perdido) serão criadas
+              automaticamente.
             </p>
           </div>
-          <DialogFooter className="bg-slate-900/50 border-slate-700">
+          <DialogFooter className="border-slate-700 bg-slate-900/50">
             <Button
               variant="outline"
               onClick={() => setNewPipelineOpen(false)}
@@ -674,7 +713,7 @@ export default function PipelinesPage() {
               disabled={creating || !newPipelineName.trim()}
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              {creating ? "Creating..." : "Create Pipeline"}
+              {creating ? 'Creating...' : 'Create Pipeline'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -702,6 +741,7 @@ export default function PipelinesPage() {
         onOpenChange={setDealFormOpen}
         deal={editingDeal}
         pipelineId={selectedPipelineId}
+        pipelines={pipelines}
         stages={stages}
         defaultStageId={defaultStageId}
         onSaved={refreshDeals}

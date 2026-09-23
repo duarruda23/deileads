@@ -24,18 +24,19 @@
 //     stop retries.
 // ============================================================
 
-import { NextResponse } from "next/server";
-import type { PostgrestError } from "@supabase/supabase-js";
+import { NextResponse } from 'next/server';
+import type { PostgrestError } from '@supabase/supabase-js';
 
-import { hashHottok } from "@/lib/auth/hotmart";
-import { supabaseAdmin } from "@/lib/automations/admin-client";
-import { runAutomationsForTrigger } from "@/lib/automations/engine";
+import { hashHottok } from '@/lib/auth/hotmart';
+import { extractHotmartPhone } from '@/lib/hotmart/phone';
+import { supabaseAdmin } from '@/lib/automations/admin-client';
+import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import {
   checkRateLimit,
   rateLimitResponse,
   RATE_LIMITS,
-} from "@/lib/rate-limit";
-import { createClient } from "@/lib/supabase/server";
+} from '@/lib/rate-limit';
+import { createClient } from '@/lib/supabase/server';
 
 interface HotmartBuyer {
   name?: string;
@@ -43,8 +44,8 @@ interface HotmartBuyer {
   // Purchase events (PURCHASE_APPROVED, PURCHASE_BILLET_PRINTED, …).
   checkout_phone?: string;
   checkout_phone_code?: string;
-  // Cart-abandonment event (PURCHASE_OUT_OF_SHOPPING_CART) — already
-  // includes the country code, unlike checkout_phone above.
+  // Cart-abandonment event (PURCHASE_OUT_OF_SHOPPING_CART) may include
+  // the country code. Purchase checkout_phone may already include DDD.
   phone?: string;
 }
 
@@ -68,55 +69,36 @@ interface HotmartWebhookPayload {
   };
 }
 
-/**
- * Purchase-event payloads split the phone into a local number
- * (`checkout_phone`) and, for Brazilian buyers only, a separate DDD
- * (`checkout_phone_code`) — neither carries the country code.
- * Cart-abandonment's `buyer.phone` already comes fully formed
- * (country code included). `submit_hotmart_lead` strips non-digits
- * either way, so exact separator formatting doesn't matter here.
- */
-function extractPhone(buyer: HotmartBuyer | undefined): string | null {
-  if (!buyer) return null;
-  if (buyer.phone) return buyer.phone;
-  if (buyer.checkout_phone) {
-    return buyer.checkout_phone_code
-      ? `55${buyer.checkout_phone_code}${buyer.checkout_phone}`
-      : buyer.checkout_phone;
-  }
-  return null;
-}
-
 function rpcErrorToResponse(err: PostgrestError): NextResponse {
-  if (err.code === "22023") {
+  if (err.code === '22023') {
     return NextResponse.json(
-      { ok: false, error: "Unknown Hotmart token" },
-      { status: 400 },
+      { ok: false, error: 'Unknown Hotmart token' },
+      { status: 400 }
     );
   }
-  if (err.code === "23514") {
+  if (err.code === '23514') {
     return NextResponse.json(
       {
         ok: false,
         error:
-          "The connected account has no default pipeline/stage configured yet.",
+          'The connected account has no default pipeline/stage configured yet.',
       },
-      { status: 409 },
+      { status: 409 }
     );
   }
-  console.error("[hotmart-webhook] unexpected RPC error:", err);
+  console.error('[hotmart-webhook] unexpected RPC error:', err);
   return NextResponse.json(
-    { ok: false, error: "Failed to process Hotmart event" },
-    { status: 500 },
+    { ok: false, error: 'Failed to process Hotmart event' },
+    { status: 500 }
   );
 }
 
 export async function POST(request: Request) {
-  const hottok = request.headers.get("x-hotmart-hottok");
+  const hottok = request.headers.get('x-hotmart-hottok');
   if (!hottok) {
     return NextResponse.json(
-      { ok: false, error: "Missing X-HOTMART-HOTTOK header" },
-      { status: 401 },
+      { ok: false, error: 'Missing X-HOTMART-HOTTOK header' },
+      { status: 401 }
     );
   }
 
@@ -124,7 +106,7 @@ export async function POST(request: Request) {
 
   const limit = checkRateLimit(
     `hotmart:${hottokHash}`,
-    RATE_LIMITS.hotmartWebhook,
+    RATE_LIMITS.hotmartWebhook
   );
   if (!limit.success) return rateLimitResponse(limit);
 
@@ -133,33 +115,37 @@ export async function POST(request: Request) {
     body = await request.json();
   } catch {
     return NextResponse.json(
-      { ok: false, error: "Invalid JSON body" },
-      { status: 400 },
+      { ok: false, error: 'Invalid JSON body' },
+      { status: 400 }
     );
   }
 
   const event = body.event;
   if (!event) {
     return NextResponse.json(
-      { ok: false, error: "Missing event" },
-      { status: 400 },
+      { ok: false, error: 'Missing event' },
+      { status: 400 }
     );
   }
 
   const buyer = body.data?.buyer;
-  const phone = extractPhone(buyer);
+  const phone = extractHotmartPhone(buyer);
   const origin = body.data?.purchase?.origin;
-  const utm = origin ? { src: origin.src, sck: origin.sck, xcod: origin.xcod } : null;
+  const utm = origin
+    ? { src: origin.src, sck: origin.sck, xcod: origin.xcod }
+    : null;
   const price = body.data?.purchase?.price;
   const product = body.data?.product;
   // Hotmart sends product.id as a number; the RPC/hotmart_products
   // both take it as text (see 042) — stringify here once instead of
   // at every call site.
   const productId =
-    product?.id === undefined || product.id === null ? null : String(product.id);
+    product?.id === undefined || product.id === null
+      ? null
+      : String(product.id);
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("submit_hotmart_lead", {
+  const { data, error } = await supabase.rpc('submit_hotmart_lead', {
     p_hottok_hash: hottokHash,
     p_event: event,
     p_name: buyer?.name ?? null,
@@ -183,14 +169,17 @@ export async function POST(request: Request) {
   // combined-tag automations (e.g. "Desafio + Análise") built on top of
   // this can actually run. Generic across every account — nothing below
   // is specific to any one Hotmart seller.
-  const responseBody = data as { contact_id?: string; tag_applied?: boolean } | null;
+  const responseBody = data as {
+    contact_id?: string;
+    tag_applied?: boolean;
+  } | null;
   if (responseBody?.tag_applied && responseBody.contact_id && productId) {
     dispatchTagAddedForHotmartProduct({
       hottokHash,
       contactId: responseBody.contact_id,
       productId,
     }).catch((err) =>
-      console.error("[hotmart-webhook] tag_added dispatch failed:", err),
+      console.error('[hotmart-webhook] tag_added dispatch failed:', err)
     );
   }
 
@@ -211,30 +200,30 @@ async function dispatchTagAddedForHotmartProduct(args: {
   const admin = supabaseAdmin();
 
   const { data: config } = await admin
-    .from("hotmart_config")
-    .select("account_id")
-    .eq("hottok_hash", args.hottokHash)
+    .from('hotmart_config')
+    .select('account_id')
+    .eq('hottok_hash', args.hottokHash)
     .maybeSingle();
   if (!config?.account_id) return;
 
   const { data: product } = await admin
-    .from("hotmart_products")
-    .select("group_id")
-    .eq("account_id", config.account_id)
-    .eq("hotmart_product_id", args.productId)
+    .from('hotmart_products')
+    .select('group_id')
+    .eq('account_id', config.account_id)
+    .eq('hotmart_product_id', args.productId)
     .maybeSingle();
   if (!product?.group_id) return;
 
   const { data: group } = await admin
-    .from("hotmart_product_groups")
-    .select("tag_id")
-    .eq("id", product.group_id)
+    .from('hotmart_product_groups')
+    .select('tag_id')
+    .eq('id', product.group_id)
     .maybeSingle();
   if (!group?.tag_id) return;
 
   await runAutomationsForTrigger({
     accountId: config.account_id,
-    triggerType: "tag_added",
+    triggerType: 'tag_added',
     contactId: args.contactId,
     context: { tag_id: group.tag_id },
   });

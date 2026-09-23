@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -71,7 +72,10 @@ export default function ContactsPage() {
   const [totalCount, setTotalCount] = useState(0);
   // Deep-link from the pipelines page's "N leads disponíveis" badge
   // (?pool=1) lands here with the pool filter already on.
-  const [poolOnly, setPoolOnly] = useState(() => searchParams.get('pool') === '1');
+  const [poolOnly, setPoolOnly] = useState(
+    () => searchParams.get('pool') === '1'
+  );
+  const [selectedTagId, setSelectedTagId] = useState('');
   const [poolCount, setPoolCount] = useState(0);
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [ownersMap, setOwnersMap] = useState<Record<string, string>>({});
@@ -130,13 +134,19 @@ export default function ContactsPage() {
 
     let query = supabase
       .from('contacts')
-      .select('*', { count: 'exact' })
+      .select(selectedTagId ? '*, contact_tags!inner(tag_id)' : '*', {
+        count: 'exact',
+      })
       .order('created_at', { ascending: false })
       .range(from, to);
 
+    if (selectedTagId) query = query.eq('contact_tags.tag_id', selectedTagId);
+
     if (search.trim()) {
       const term = `%${search.trim()}%`;
-      query = query.or(`name.ilike.${term},phone.ilike.${term},email.ilike.${term}`);
+      query = query.or(
+        `name.ilike.${term},phone.ilike.${term},email.ilike.${term}`
+      );
     }
 
     if (poolOnly) {
@@ -152,15 +162,16 @@ export default function ContactsPage() {
     }
 
     setTotalCount(count ?? 0);
+    const rows = (data ?? []) as unknown as Contact[];
 
-    if (!data || data.length === 0) {
+    if (rows.length === 0) {
       setContacts([]);
       setLoading(false);
       return;
     }
 
     // Fetch tags for these contacts
-    const contactIds = data.map((c) => c.id);
+    const contactIds = rows.map((c) => c.id);
     const { data: contactTags } = await supabase
       .from('contact_tags')
       .select('contact_id, tag_id')
@@ -172,7 +183,7 @@ export default function ContactsPage() {
       tagsByContact[ct.contact_id].push(ct.tag_id);
     });
 
-    const enriched: ContactWithTags[] = data.map((c) => ({
+    const enriched: ContactWithTags[] = rows.map((c) => ({
       ...c,
       tags: (tagsByContact[c.id] ?? [])
         .map((tid) => tagsMap[tid])
@@ -181,21 +192,19 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, poolOnly, tagsMap]);
+  }, [supabase, page, search, poolOnly, selectedTagId, tagsMap]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
   // synchronously in the effect body, so the cascade the lint rule
   // warns about doesn't apply here.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTags();
     fetchOwners();
     fetchPoolCount();
   }, [fetchTags, fetchOwners, fetchPoolCount]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContacts();
   }, [fetchContacts]);
 
@@ -203,7 +212,9 @@ export default function ContactsPage() {
     e.stopPropagation();
     setClaimingId(contactId);
     try {
-      const res = await fetch(`/api/contacts/${contactId}/claim`, { method: 'POST' });
+      const res = await fetch(`/api/contacts/${contactId}/claim`, {
+        method: 'POST',
+      });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
         toast.error(payload.error || 'Failed to claim lead');
@@ -277,11 +288,12 @@ export default function ContactsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Contacts</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Manage your contact list. {totalCount > 0 && `${totalCount} total contacts.`}
+          <p className="mt-1 text-sm text-slate-400">
+            Manage your contact list.{' '}
+            {totalCount > 0 && `${totalCount} total contacts.`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -303,7 +315,7 @@ export default function ContactsPage() {
             }}
             className={
               poolOnly
-                ? 'bg-amber-500 hover:bg-amber-500/90 text-slate-900'
+                ? 'bg-amber-500 text-slate-900 hover:bg-amber-500/90'
                 : 'border-slate-700 text-slate-300 hover:bg-slate-800'
             }
           >
@@ -333,53 +345,100 @@ export default function ContactsPage() {
       </div>
 
       {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-slate-500" />
-        <Input
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            // Reset pagination when the query changes — the result
-            // set shrinks/grows, page N may no longer be valid.
-            setPage(0);
-          }}
-          placeholder="Search by name, phone, or email..."
-          className="pl-8 bg-slate-900 border-slate-700 text-white placeholder:text-slate-500"
-        />
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative max-w-sm min-w-56 flex-1">
+          <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-slate-500" />
+          <Input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              // Reset pagination when the query changes — the result
+              // set shrinks/grows, page N may no longer be valid.
+              setPage(0);
+            }}
+            placeholder="Search by name, phone, or email..."
+            className="border-slate-700 bg-slate-900 pl-8 text-white placeholder:text-slate-500"
+          />
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200">
+            Tag / produto
+            {selectedTagId ? `: ${tagsMap[selectedTagId]?.name ?? ''}` : ''}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="max-h-72 overflow-y-auto border-slate-700 bg-slate-900 text-slate-200">
+            <DropdownMenuCheckboxItem
+              checked={!selectedTagId}
+              onCheckedChange={() => {
+                setSelectedTagId('');
+                setPage(0);
+              }}
+            >
+              Todos
+            </DropdownMenuCheckboxItem>
+            {Object.values(tagsMap)
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((tag) => (
+                <DropdownMenuCheckboxItem
+                  key={tag.id}
+                  checked={selectedTagId === tag.id}
+                  onCheckedChange={() => {
+                    setSelectedTagId(tag.id);
+                    setPage(0);
+                  }}
+                >
+                  {tag.name}
+                </DropdownMenuCheckboxItem>
+              ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border border-slate-800 overflow-hidden">
+      <div className="overflow-hidden rounded-lg border border-slate-800">
         <Table>
           <TableHeader>
             <TableRow className="border-slate-800 hover:bg-transparent">
               <TableHead className="text-slate-400">Name</TableHead>
               <TableHead className="text-slate-400">Phone</TableHead>
-              <TableHead className="text-slate-400 hidden md:table-cell">Email</TableHead>
-              <TableHead className="text-slate-400 hidden lg:table-cell">Company</TableHead>
-              <TableHead className="text-slate-400 hidden md:table-cell">Tags</TableHead>
-              <TableHead className="text-slate-400 hidden lg:table-cell">Owner</TableHead>
-              <TableHead className="text-slate-400 hidden lg:table-cell">Created</TableHead>
-              <TableHead className="text-slate-400 w-12" />
+              <TableHead className="hidden text-slate-400 md:table-cell">
+                Email
+              </TableHead>
+              <TableHead className="hidden text-slate-400 lg:table-cell">
+                Company
+              </TableHead>
+              <TableHead className="hidden text-slate-400 md:table-cell">
+                Tags
+              </TableHead>
+              <TableHead className="hidden text-slate-400 lg:table-cell">
+                Owner
+              </TableHead>
+              <TableHead className="hidden text-slate-400 lg:table-cell">
+                Created
+              </TableHead>
+              <TableHead className="w-12 text-slate-400" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow className="border-slate-800">
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={8} className="py-12 text-center">
                   <div className="flex flex-col items-center gap-2">
-                    <Loader2 className="size-6 animate-spin text-primary" />
-                    <p className="text-sm text-slate-500">Loading contacts...</p>
+                    <Loader2 className="text-primary size-6 animate-spin" />
+                    <p className="text-sm text-slate-500">
+                      Loading contacts...
+                    </p>
                   </div>
                 </TableCell>
               </TableRow>
             ) : contacts.length === 0 ? (
               <TableRow className="border-slate-800">
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={8} className="py-12 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <Users className="size-8 text-slate-600" />
                     <p className="text-sm text-slate-500">
-                      {search ? 'No contacts match your search.' : 'No contacts yet.'}
+                      {search
+                        ? 'No contacts match your search.'
+                        : 'No contacts yet.'}
                     </p>
                     {!search && (
                       <Button
@@ -399,20 +458,24 @@ export default function ContactsPage() {
               contacts.map((contact) => (
                 <TableRow
                   key={contact.id}
-                  className="border-slate-800 hover:bg-slate-900/50 cursor-pointer"
+                  className="cursor-pointer border-slate-800 hover:bg-slate-900/50"
                   onClick={() => openDetail(contact.id)}
                 >
-                  <TableCell className="text-white font-medium">
-                    {contact.name || <span className="text-slate-500 italic">Unnamed</span>}
+                  <TableCell className="font-medium text-white">
+                    {contact.name || (
+                      <span className="text-slate-500 italic">Unnamed</span>
+                    )}
                   </TableCell>
-                  <TableCell className="text-slate-300 font-mono text-xs">
+                  <TableCell className="font-mono text-xs text-slate-300">
                     {contact.phone}
                   </TableCell>
-                  <TableCell className="text-slate-400 hidden md:table-cell text-sm">
+                  <TableCell className="hidden text-sm text-slate-400 md:table-cell">
                     {contact.email || <span className="text-slate-600">-</span>}
                   </TableCell>
-                  <TableCell className="text-slate-400 hidden lg:table-cell text-sm">
-                    {contact.company || <span className="text-slate-600">-</span>}
+                  <TableCell className="hidden text-sm text-slate-400 lg:table-cell">
+                    {contact.company || (
+                      <span className="text-slate-600">-</span>
+                    )}
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
                     <div className="flex flex-wrap gap-1">
@@ -430,7 +493,7 @@ export default function ContactsPage() {
                           </span>
                         ))
                       ) : (
-                        <span className="text-slate-600 text-xs">-</span>
+                        <span className="text-xs text-slate-600">-</span>
                       )}
                       {contact.tags && contact.tags.length > 3 && (
                         <span className="text-[10px] text-slate-500">
@@ -439,21 +502,23 @@ export default function ContactsPage() {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="hidden lg:table-cell text-sm">
+                  <TableCell className="hidden text-sm lg:table-cell">
                     {contact.owner_id ? (
                       <span className="text-slate-300">
                         {ownersMap[contact.owner_id] || 'Unknown'}
                       </span>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <span className="text-amber-400 text-xs">Unclaimed</span>
+                        <span className="text-xs text-amber-400">
+                          Unclaimed
+                        </span>
                         {canEdit && (
                           <Button
                             size="sm"
                             variant="outline"
                             onClick={(e) => claimContact(contact.id, e)}
                             disabled={claimingId === contact.id}
-                            className="h-6 px-2 text-[11px] border-primary/40 text-primary hover:bg-primary/10"
+                            className="border-primary/40 text-primary hover:bg-primary/10 h-6 px-2 text-[11px]"
                           >
                             {claimingId === contact.id ? (
                               <Loader2 className="size-3 animate-spin" />
@@ -465,7 +530,7 @@ export default function ContactsPage() {
                       </div>
                     )}
                   </TableCell>
-                  <TableCell className="text-slate-500 text-xs hidden lg:table-cell">
+                  <TableCell className="hidden text-xs text-slate-500 lg:table-cell">
                     {new Date(contact.created_at).toLocaleDateString('en-US', {
                       month: 'short',
                       day: 'numeric',
@@ -488,7 +553,7 @@ export default function ContactsPage() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent
                         align="end"
-                        className="bg-slate-900 border-slate-700"
+                        className="border-slate-700 bg-slate-900"
                       >
                         <DropdownMenuItem
                           onClick={(e) => {
@@ -525,8 +590,8 @@ export default function ContactsPage() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-slate-500">
-            Showing {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, totalCount)} of{' '}
-            {totalCount}
+            Showing {page * PAGE_SIZE + 1}-
+            {Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
           </p>
           <div className="flex items-center gap-1">
             <Button
@@ -538,7 +603,7 @@ export default function ContactsPage() {
             >
               <ChevronLeft className="size-4" />
             </Button>
-            <span className="text-xs text-slate-400 px-2">
+            <span className="px-2 text-xs text-slate-400">
               Page {page + 1} of {totalPages}
             </span>
             <Button
@@ -595,18 +660,18 @@ export default function ContactsPage() {
 
       {/* Delete Confirmation */}
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <DialogContent className="bg-slate-900 border-slate-700 text-slate-200 sm:max-w-sm">
+        <DialogContent className="border-slate-700 bg-slate-900 text-slate-200 sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-white">Delete Contact</DialogTitle>
             <DialogDescription className="text-slate-400">
               Are you sure you want to delete{' '}
-              <span className="text-slate-200 font-medium">
+              <span className="font-medium text-slate-200">
                 {deleteTarget?.name || deleteTarget?.phone}
               </span>
               ? This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="bg-slate-900 border-slate-700">
+          <DialogFooter className="border-slate-700 bg-slate-900">
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmOpen(false)}
