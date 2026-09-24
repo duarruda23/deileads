@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
@@ -8,6 +8,10 @@ import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
 import { useClaimPipelinePicker } from '@/components/pipelines/claim-pipeline-picker';
 import { claimContactLead } from '@/lib/leads/claim-client';
+import { TaskFormDialog } from '@/components/tasks/task-form-dialog';
+import { notifyTasksChanged } from '@/hooks/use-task-alerts';
+import { dueBucket, formatDue } from '@/lib/tasks/status';
+import { getTaskType } from '@/lib/tasks/task-types';
 import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, Task } from '@/types';
 import {
   Sheet,
@@ -54,7 +58,7 @@ export function ContactDetailView({
   onUpdated,
 }: ContactDetailViewProps) {
   const supabase = createClient();
-  const { accountId, defaultCurrency, canManageMembers, profile } = useAuth();
+  const { accountId, defaultCurrency, canManageMembers } = useAuth();
   // Viewers can open this sheet read-only. Gating the Save button
   // (rather than relying on the update's error result) avoids the
   // misleading "Contact updated" toast: an UPDATE a viewer isn't
@@ -96,9 +100,19 @@ export function ContactDetailView({
 
   // Tasks tab
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskDueAt, setNewTaskDueAt] = useState('');
-  const [savingTask, setSavingTask] = useState(false);
+  const [taskFormOpen, setTaskFormOpen] = useState(false);
+  // Stable identity so the form doesn't reset while open (see TaskFormDialog).
+  const taskTarget = useMemo(
+    () =>
+      contactId
+        ? {
+            contactId,
+            contactLabel: contact?.name || contact?.phone || '',
+            assignedTo: contact?.owner_id ?? null,
+          }
+        : null,
+    [contactId, contact?.name, contact?.phone, contact?.owner_id]
+  );
   const [loadingTasks, setLoadingTasks] = useState(false);
 
   // Custom fields tab
@@ -403,33 +417,6 @@ export function ContactDetailView({
     }
   }
 
-  async function addTask() {
-    if (!contactId || !newTaskTitle.trim() || !accountId) return;
-    setSavingTask(true);
-
-    const { error } = await supabase.from('tasks').insert({
-      contact_id: contactId,
-      account_id: accountId,
-      title: newTaskTitle.trim(),
-      due_at: newTaskDueAt || null,
-      // Defaults to whoever is creating it from this lead's card —
-      // same "assign to me by default, reassignable elsewhere"
-      // convention deal-form.tsx already uses for deals.assigned_to.
-      assigned_to: profile?.id ?? null,
-      created_by: profile?.id ?? null,
-    });
-
-    if (error) {
-      toast.error('Failed to add task');
-    } else {
-      setNewTaskTitle('');
-      setNewTaskDueAt('');
-      fetchTasks();
-      toast.success('Task added');
-    }
-    setSavingTask(false);
-  }
-
   async function toggleTask(task: Task) {
     const { error } = await supabase
       .from('tasks')
@@ -439,6 +426,7 @@ export function ContactDetailView({
     if (error) {
       toast.error('Failed to update task');
     } else {
+      notifyTasksChanged();
       fetchTasks();
     }
   }
@@ -450,6 +438,7 @@ export function ContactDetailView({
       toast.error('Failed to delete task');
     } else {
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      notifyTasksChanged();
       toast.success('Task deleted');
     }
   }
@@ -806,34 +795,17 @@ export function ContactDetailView({
 
               {/* Tasks Tab */}
               <TabsContent value="tasks" className="flex-1 flex flex-col min-h-0 px-4 py-3">
-                <div className="space-y-2 mb-3">
-                  <Input
-                    value={newTaskTitle}
-                    onChange={(e) => setNewTaskTitle(e.target.value)}
-                    placeholder="Follow up about pricing..."
-                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 text-sm"
-                  />
-                  <div className="flex gap-2">
-                    <Input
-                      type="date"
-                      value={newTaskDueAt}
-                      onChange={(e) => setNewTaskDueAt(e.target.value)}
-                      className="bg-slate-800 border-slate-700 text-white text-sm"
-                    />
-                    <Button
-                      onClick={addTask}
-                      disabled={!newTaskTitle.trim() || savingTask}
-                      className="bg-primary hover:bg-primary/90 text-primary-foreground shrink-0"
-                      size="sm"
-                    >
-                      {savingTask ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Plus className="size-3.5" />
-                      )}
-                      Add Task
-                    </Button>
-                  </div>
+                <div className="mb-3">
+                  <GatedButton
+                    canAct={canEdit}
+                    gateReason="create tasks"
+                    onClick={() => setTaskFormOpen(true)}
+                    size="sm"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    <Plus className="size-3.5" />
+                    Nova tarefa
+                  </GatedButton>
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2">
@@ -843,7 +815,7 @@ export function ContactDetailView({
                     </div>
                   ) : tasks.length === 0 ? (
                     <p className="text-sm text-slate-500 text-center py-8">
-                      No tasks yet.
+                      Nenhuma tarefa ainda.
                     </p>
                   ) : (
                     tasks.map((task) => (
@@ -861,6 +833,15 @@ export function ContactDetailView({
                         >
                           {task.completed_at && <Check className="size-3" />}
                         </button>
+                        {(() => {
+                          const type = getTaskType(task.task_type);
+                          return (
+                            <type.icon
+                              aria-label={type.label}
+                              className="mt-0.5 size-4 shrink-0 text-slate-400"
+                            />
+                          );
+                        })()}
                         <div className="flex-1 min-w-0">
                           <p
                             className={`text-sm whitespace-pre-wrap ${
@@ -870,8 +851,18 @@ export function ContactDetailView({
                             {task.title}
                           </p>
                           {task.due_at && (
-                            <p className="text-xs text-slate-500 mt-1">
-                              Due {new Date(task.due_at).toLocaleDateString()}
+                            <p
+                              className={`text-xs mt-1 ${
+                                dueBucket(task) === 'overdue'
+                                  ? 'text-red-400'
+                                  : dueBucket(task) === 'today'
+                                    ? 'text-amber-400'
+                                    : 'text-slate-500'
+                              }`}
+                            >
+                              {task.completed_at
+                                ? new Date(task.due_at).toLocaleDateString('pt-BR')
+                                : formatDue(task.due_at)}
                             </p>
                           )}
                         </div>
@@ -996,6 +987,12 @@ export function ContactDetailView({
       </SheetContent>
     </Sheet>
     {claimPicker.dialog}
+    <TaskFormDialog
+      open={taskFormOpen}
+      onOpenChange={setTaskFormOpen}
+      target={taskTarget}
+      onCreated={fetchTasks}
+    />
     </>
   );
 }

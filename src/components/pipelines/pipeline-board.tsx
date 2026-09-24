@@ -16,6 +16,8 @@ import {
 } from "@dnd-kit/core";
 import type { Deal, PipelineStage } from "@/types";
 import { DealCard } from "./deal-card";
+import type { TaskMarker } from "@/lib/tasks/status";
+import type { MarkerTask } from "@/components/tasks/task-marker-chip";
 import { GatedButton } from "@/components/ui/gated-button";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
@@ -28,6 +30,9 @@ interface PipelineBoardProps {
   onDealMoved: (dealId: string, newStageId: string) => void;
   onAddDeal: (stageId: string) => void;
   onEditDeal: (deal: Deal) => void;
+  /** deal id → task marker. Omitted entries render no marker. */
+  taskMarkers?: Record<string, TaskMarker<MarkerTask>>;
+  onAddTask?: (deal: Deal) => void;
 }
 
 export function PipelineBoard({
@@ -36,6 +41,8 @@ export function PipelineBoard({
   onDealMoved,
   onAddDeal,
   onEditDeal,
+  taskMarkers,
+  onAddTask,
 }: PipelineBoardProps) {
   const { defaultCurrency } = useAuth();
   // Same capability the top-bar "Add Deal" button gates on — the
@@ -125,6 +132,8 @@ export function PipelineBoard({
               canAddDeal={canCreateDeals}
               onAddDeal={onAddDeal}
               onEditDeal={onEditDeal}
+              taskMarkers={taskMarkers}
+              onAddTask={onAddTask}
             />
           );
         })}
@@ -144,6 +153,7 @@ export function PipelineBoard({
                 sortedStages.find((s) => s.id === activeDeal.stage_id) ?? null
               }
               onEdit={() => {}}
+              marker={taskMarkers?.[activeDeal.id]}
               isOverlay
             />
           </div>
@@ -200,6 +210,8 @@ function StageColumn({
   canAddDeal,
   onAddDeal,
   onEditDeal,
+  taskMarkers,
+  onAddTask,
 }: {
   stage: PipelineStage;
   deals: Deal[];
@@ -208,6 +220,8 @@ function StageColumn({
   canAddDeal: boolean;
   onAddDeal: (stageId: string) => void;
   onEditDeal: (deal: Deal) => void;
+  taskMarkers?: Record<string, TaskMarker<MarkerTask>>;
+  onAddTask?: (deal: Deal) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
 
@@ -255,6 +269,8 @@ function StageColumn({
               deal={deal}
               stage={stage}
               onEdit={onEditDeal}
+              marker={taskMarkers?.[deal.id]}
+              onAddTask={onAddTask}
             />
           ))
         )}
@@ -279,10 +295,14 @@ function DraggableDealCard({
   deal,
   stage,
   onEdit,
+  marker,
+  onAddTask,
 }: {
   deal: Deal;
   stage: PipelineStage;
   onEdit: (deal: Deal) => void;
+  marker?: TaskMarker<MarkerTask>;
+  onAddTask?: (deal: Deal) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: deal.id,
@@ -295,7 +315,13 @@ function DraggableDealCard({
       {...attributes}
       style={{ opacity: isDragging ? 0.3 : 1, touchAction: "none" }}
     >
-      <DealCard deal={deal} stage={stage} onEdit={onEdit} />
+      <DealCard
+        deal={deal}
+        stage={stage}
+        onEdit={onEdit}
+        marker={marker}
+        onAddTask={onAddTask}
+      />
     </div>
   );
 }

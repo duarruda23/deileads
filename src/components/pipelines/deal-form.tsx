@@ -9,6 +9,7 @@ import { CURRENCIES } from '@/lib/currency';
 import { dispatchDealStageEvent } from '@/lib/automations/dispatch-client';
 import { entryStageId } from '@/lib/pipelines/members';
 import { useClaimPipelinePicker } from '@/components/pipelines/claim-pipeline-picker';
+import { DealTasksSection } from '@/components/tasks/deal-tasks-section';
 import type {
   Contact,
   Conversation,
@@ -746,6 +747,17 @@ export function DealForm({
                 className="min-h-[100px] border-slate-700 bg-slate-800 text-white"
               />
             </div>
+
+            {deal && deal.contact_id && (
+              <DealTasksSection
+                contactId={deal.contact_id}
+                contactLabel={deal.contact?.name || deal.contact?.phone || deal.title}
+                dealId={deal.id}
+                assignedTo={deal.assigned_to}
+                canEdit={canEdit}
+                onChanged={onSaved}
+              />
+            )}
 
             {deal && (
               <div className="space-y-2 rounded-lg border border-slate-700 bg-slate-900/50 p-3">

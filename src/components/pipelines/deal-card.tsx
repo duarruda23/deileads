@@ -1,14 +1,23 @@
 "use client";
 
 import type { Deal, PipelineStage } from "@/types";
-import { Calendar, Check, X } from "lucide-react";
+import { Calendar, CalendarPlus, Check, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
+import type { TaskMarker } from "@/lib/tasks/status";
+import {
+  TaskMarkerChip,
+  type MarkerTask,
+} from "@/components/tasks/task-marker-chip";
 
 interface DealCardProps {
   deal: Deal;
   stage: PipelineStage | null;
   onEdit: (deal: Deal) => void;
   isOverlay?: boolean;
+  /** Task marker for this lead; omitted while tasks are loading. */
+  marker?: TaskMarker<MarkerTask>;
+  /** Opens "Nova tarefa" for this deal. */
+  onAddTask?: (deal: Deal) => void;
 }
 
 function formatDate(dateStr: string) {
@@ -25,7 +34,14 @@ function initials(name?: string, fallback?: string) {
   return source.charAt(0).toUpperCase();
 }
 
-export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
+export function DealCard({
+  deal,
+  stage,
+  onEdit,
+  isOverlay,
+  marker,
+  onAddTask,
+}: DealCardProps) {
   const contactLabel = deal.contact?.name || deal.contact?.phone || "No contact";
   const assigneeLabel = deal.assignee?.full_name || null;
 
@@ -90,14 +106,45 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         )}
       </div>
 
-      {assigneeLabel && (
-        <div className="mt-2 flex items-center justify-end">
-          <span
-            title={assigneeLabel}
-            className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary"
-          >
-            {initials(assigneeLabel)}
-          </span>
+      {(marker || onAddTask || assigneeLabel) && (
+        <div className="mt-2 flex items-center gap-1.5">
+          <div className="min-w-0 flex-1">
+            {marker && <TaskMarkerChip marker={marker} />}
+          </div>
+          {onAddTask && !isOverlay && (
+            // A span, not a <button>: the whole card is already a button
+            // and buttons can't nest. Stopping pointerdown keeps a tap
+            // here from starting a drag.
+            <span
+              role="button"
+              tabIndex={0}
+              title="Nova tarefa"
+              aria-label="Nova tarefa"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddTask(deal);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onAddTask(deal);
+                }
+              }}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-700 hover:text-primary"
+            >
+              <CalendarPlus className="h-3.5 w-3.5" />
+            </span>
+          )}
+          {assigneeLabel && (
+            <span
+              title={assigneeLabel}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary"
+            >
+              {initials(assigneeLabel)}
+            </span>
+          )}
         </div>
       )}
     </button>

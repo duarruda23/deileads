@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useTranslations } from "@/hooks/use-translations";
 import { useTotalUnread } from "@/hooks/use-total-unread";
+import { useTaskAlerts } from "@/hooks/use-task-alerts";
 import type { DictKey } from "@/lib/i18n/dictionaries";
 import {
   CheckSquare,
@@ -115,6 +116,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const { profile, profileLoading, account, accountRole, signOut } = useAuth();
   const { t } = useTranslations();
   const totalUnread = useTotalUnread();
+  const taskAlerts = useTaskAlerts();
+  const taskAlertCount = taskAlerts.overdue + taskAlerts.today;
   // Only surface the account-name strip when it actually carries
   // information. A solo user's personal account is named after them
   // (the 017 signup trigger seeds it from `full_name`), so showing it
@@ -211,6 +214,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
 
               const showUnreadDot =
                 item.href === "/inbox" && totalUnread > 0 && !isActive;
+              const showTaskBadge = item.href === "/tasks" && taskAlertCount > 0;
 
               return (
                 <li key={item.href}>
@@ -232,6 +236,20 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                         className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
                       >
                         Beta
+                      </span>
+                    )}
+                    {showTaskBadge && (
+                      <span
+                        title={`${taskAlerts.overdue} atrasada(s), ${taskAlerts.today} pra hoje`}
+                        aria-label={`${taskAlerts.overdue} tarefas atrasadas e ${taskAlerts.today} pra hoje`}
+                        className={cn(
+                          "min-w-5 rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold",
+                          taskAlerts.overdue > 0
+                            ? "bg-red-500/20 text-red-300"
+                            : "bg-amber-500/20 text-amber-300",
+                        )}
+                      >
+                        {taskAlertCount}
                       </span>
                     )}
                     {showUnreadDot && (

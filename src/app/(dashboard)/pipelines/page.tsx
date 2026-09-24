@@ -10,6 +10,12 @@ import { PipelineSettings } from '@/components/pipelines/pipeline-settings';
 import { DealForm } from '@/components/pipelines/deal-form';
 import { PipelineAnalytics } from '@/components/pipelines/pipeline-analytics';
 import {
+  TaskFormDialog,
+  type TaskFormTarget,
+} from '@/components/tasks/task-form-dialog';
+import type { MarkerTask } from '@/components/tasks/task-marker-chip';
+import { taskMarker, type TaskMarker } from '@/lib/tasks/status';
+import {
   PipelineMembersPicker,
   type MemberOption,
 } from '@/components/pipelines/pipeline-members-picker';
@@ -117,6 +123,16 @@ export default function PipelinesPage() {
   const [filterTagIds, setFilterTagIds] = useState<Set<string>>(new Set());
   const [filterAssignedTo, setFilterAssignedTo] = useState<string>('');
   const [filterSource, setFilterSource] = useState<string>('');
+  const [filterTask, setFilterTask] = useState<
+    '' | 'overdue' | 'today' | 'none'
+  >('');
+
+  // Open tasks of the account, for the Kanban card marker. null while
+  // loading so cards don't flash "Sem tarefa" before the fetch lands.
+  const [openTasks, setOpenTasks] = useState<
+    (MarkerTask & { contact_id: string; deal_id: string | null })[] | null
+  >(null);
+  const [taskTarget, setTaskTarget] = useState<TaskFormTarget | null>(null);
 
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
@@ -195,6 +211,29 @@ export default function PipelinesPage() {
     })();
     refreshMembers();
   }, [supabase, accountId, refreshMembers]);
+
+  const refreshOpenTasks = useCallback(async () => {
+    const rows: (MarkerTask & { contact_id: string; deal_id: string | null })[] =
+      [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('id, title, task_type, due_at, completed_at, contact_id, deal_id')
+        .is('completed_at', null)
+        .range(from, from + 999);
+      if (error) {
+        console.error('[pipelines] failed to load tasks:', error.message);
+        break;
+      }
+      rows.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    setOpenTasks(rows);
+  }, [supabase]);
+
+  useEffect(() => {
+    refreshOpenTasks();
+  }, [refreshOpenTasks]);
 
   const loadTags = useCallback(async () => {
     const { data } = await supabase.from('tags').select('*').order('name');
@@ -361,10 +400,42 @@ export default function PipelinesPage() {
           stageId: newStageId,
           event: 'moved',
         });
+        // Moving a lead forward is when its next step gets decided —
+        // offer to schedule it right there (not for won/lost stages).
+        const stage = stages.find((s) => s.id === newStageId);
+        if (stage && stage.stage_type === 'open' && moved.contact_id) {
+          toast(`Movido para ${stage.name}`, {
+            action: {
+              label: 'Agendar próxima tarefa',
+              onClick: () =>
+                setTaskTarget({
+                  contactId: moved.contact_id!,
+                  contactLabel:
+                    moved.contact?.name || moved.contact?.phone || moved.title,
+                  dealId: moved.id,
+                  assignedTo: moved.assigned_to,
+                  hint: `Próximo passo de ${moved.title} em ${stage.name}`,
+                }),
+            },
+          });
+        }
       }
     },
-    [supabase, refreshDeals, deals]
+    [supabase, refreshDeals, deals, stages]
   );
+
+  const handleAddTask = useCallback((deal: Deal) => {
+    if (!deal.contact_id) {
+      toast.error('Esse negócio não tem contato ligado');
+      return;
+    }
+    setTaskTarget({
+      contactId: deal.contact_id,
+      contactLabel: deal.contact?.name || deal.contact?.phone || deal.title,
+      dealId: deal.id,
+      assignedTo: deal.assigned_to,
+    });
+  }, []);
 
   const handleAddDeal = useCallback(
     (stageId?: string) => {
@@ -462,10 +533,40 @@ export default function PipelinesPage() {
     return [...seen.entries()];
   }, [deals]);
 
+  // deal id → marker. A task counts for a deal when it was created on
+  // that deal, or on its contact without a specific deal.
+  const taskMarkers = useMemo(() => {
+    if (!openTasks) return undefined;
+    const byDeal = new Map<string, MarkerTask[]>();
+    const byContact = new Map<string, MarkerTask[]>();
+    for (const t of openTasks) {
+      const map = t.deal_id ? byDeal : byContact;
+      const key = t.deal_id ?? t.contact_id;
+      const list = map.get(key);
+      if (list) list.push(t);
+      else map.set(key, [t]);
+    }
+    const now = new Date();
+    const map: Record<string, TaskMarker<MarkerTask>> = {};
+    for (const d of deals) {
+      map[d.id] = taskMarker(
+        [
+          ...(byDeal.get(d.id) ?? []),
+          ...(d.contact_id ? (byContact.get(d.contact_id) ?? []) : []),
+        ],
+        now
+      );
+    }
+    return map;
+  }, [openTasks, deals]);
+
   const filteredDeals = useMemo(() => {
     const query = filterSearch.trim().toLowerCase();
     return deals.filter((d) => {
       if (filterSource && d.source !== filterSource) return false;
+      if (filterTask && taskMarkers) {
+        if (taskMarkers[d.id]?.state !== filterTask) return false;
+      }
       if (filterAssignedTo && d.assigned_to !== filterAssignedTo) return false;
       if (filterTagIds.size > 0) {
         const dealTagIds = d.contact_id
@@ -483,6 +584,8 @@ export default function PipelinesPage() {
   }, [
     deals,
     filterSource,
+    filterTask,
+    taskMarkers,
     filterAssignedTo,
     filterTagIds,
     filterSearch,
@@ -493,6 +596,7 @@ export default function PipelinesPage() {
     (filterSearch.trim() ? 1 : 0) +
     (filterAssignedTo ? 1 : 0) +
     (filterSource ? 1 : 0) +
+    (filterTask ? 1 : 0) +
     filterTagIds.size;
 
   function toggleFilterTag(tagId: string) {
@@ -509,6 +613,7 @@ export default function PipelinesPage() {
     setFilterTagIds(new Set());
     setFilterAssignedTo('');
     setFilterSource('');
+    setFilterTask('');
   }
 
   if (loading) {
@@ -724,6 +829,19 @@ export default function PipelinesPage() {
               ))}
             </select>
 
+            <select
+              value={filterTask}
+              onChange={(e) =>
+                setFilterTask(e.target.value as '' | 'overdue' | 'today' | 'none')
+              }
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            >
+              <option value="">Tarefas: todas</option>
+              <option value="overdue">Tarefa atrasada</option>
+              <option value="today">Tarefa pra hoje</option>
+              <option value="none">Sem tarefa</option>
+            </select>
+
             {activeFilterCount > 0 && (
               <Button
                 variant="ghost"
@@ -744,6 +862,8 @@ export default function PipelinesPage() {
             onDealMoved={handleDealMoved}
             onAddDeal={handleAddDeal}
             onEditDeal={handleEditDeal}
+            taskMarkers={taskMarkers}
+            onAddTask={canCreateDeals ? handleAddTask : undefined}
           />
         </>
       )}
@@ -824,7 +944,19 @@ export default function PipelinesPage() {
         pipelines={pipelines}
         stages={stages}
         defaultStageId={defaultStageId}
-        onSaved={refreshDeals}
+        onSaved={() => {
+          refreshDeals();
+          refreshOpenTasks();
+        }}
+      />
+
+      <TaskFormDialog
+        open={!!taskTarget}
+        onOpenChange={(o) => {
+          if (!o) setTaskTarget(null);
+        }}
+        target={taskTarget}
+        onCreated={refreshOpenTasks}
       />
     </div>
   );

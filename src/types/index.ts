@@ -412,6 +412,8 @@ export interface Task {
   contact_id: string;
   deal_id?: string | null;
   title: string;
+  /** 048 — see src/lib/tasks/task-types.ts. */
+  task_type?: string;
   due_at?: string | null;
   completed_at?: string | null;
   assigned_to?: string | null;
