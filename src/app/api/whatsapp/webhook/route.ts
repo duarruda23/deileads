@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
@@ -86,6 +87,12 @@ interface WhatsAppWebhookEntry {
   }>
 }
 
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  return ab.length === bb.length && timingSafeEqual(ab, bb)
+}
+
 // GET - Webhook verification
 export async function GET(request: Request) {
   try {
@@ -99,6 +106,19 @@ export async function GET(request: Request) {
         { error: 'Missing verification parameters' },
         { status: 400 }
       )
+    }
+
+    // App-level verify token. The webhook callback is configured once
+    // per Meta app, not per connection — and coexistence connections
+    // (Embedded Signup) never store a per-row verify_token — so this
+    // env var is the primary check. Per-row tokens below stay as a
+    // fallback for installs configured the old way.
+    const appVerifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN
+    if (appVerifyToken && safeEqual(appVerifyToken, verifyToken)) {
+      return new Response(challenge, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
     }
 
     // Fetch all whatsapp configs to check verify tokens
