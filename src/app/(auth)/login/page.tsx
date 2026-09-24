@@ -41,7 +41,7 @@ function LoginPageInner() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(
     linkError === "auth-link-invalid"
-      ? "That link has expired or was already used. Request a new one below."
+      ? "Esse link expirou ou já foi usado. Peça um novo em \"Esqueci minha senha\"."
       : null,
   );
   const [loading, setLoading] = useState(false);
@@ -134,7 +134,7 @@ function LoginPageInner() {
                   href="/forgot-password"
                   className="text-sm text-primary hover:text-primary/80"
                 >
-                  Forgot password?
+                  Esqueci minha senha
                 </Link>
               </div>
               <Input

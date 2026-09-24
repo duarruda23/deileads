@@ -50,12 +50,13 @@ export default function ForgotPasswordPage() {
               <CheckCircle className="h-6 w-6 text-primary" />
             </div>
             <CardTitle className="text-xl text-white">
-              Check your email
+              Confira seu e-mail
             </CardTitle>
             <CardDescription className="text-slate-400">
-              We&apos;ve sent a password reset link to{" "}
-              <span className="text-white">{email}</span>. Please check your
-              inbox.
+              Se existir uma conta com{" "}
+              <span className="text-white">{email}</span>, enviamos um link
+              para criar uma senha nova. Olhe também a caixa de spam. O link
+              vale por 1 hora.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -64,7 +65,7 @@ export default function ForgotPasswordPage() {
                 variant="outline"
                 className="w-full border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white"
               >
-                Back to sign in
+                Voltar para o login
               </Button>
             </Link>
           </CardContent>
@@ -80,9 +81,9 @@ export default function ForgotPasswordPage() {
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <MessageSquare className="h-6 w-6 text-primary" />
           </div>
-          <CardTitle className="text-xl text-white">Reset password</CardTitle>
+          <CardTitle className="text-xl text-white">Esqueci minha senha</CardTitle>
           <CardDescription className="text-slate-400">
-            Enter your email and we&apos;ll send you a reset link
+            Informe seu e-mail e enviaremos um link para criar uma senha nova
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -95,12 +96,12 @@ export default function ForgotPasswordPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-slate-300">
-                Email
+                E-mail
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder="voce@exemplo.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -113,7 +114,7 @@ export default function ForgotPasswordPage() {
               disabled={loading}
               className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? "Sending..." : "Send reset link"}
+              {loading ? "Enviando..." : "Enviar link"}
             </Button>
           </form>
 
@@ -122,7 +123,7 @@ export default function ForgotPasswordPage() {
             className="mt-6 flex items-center justify-center gap-2 text-sm text-slate-400 hover:text-slate-300"
           >
             <ArrowLeft className="h-4 w-4" />
-            Back to sign in
+            Voltar para o login
           </Link>
         </CardContent>
       </Card>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -14,32 +14,41 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { KeyRound, CheckCircle } from "lucide-react";
+import { KeyRound, CheckCircle, AlertTriangle } from "lucide-react";
 
 const MIN_LENGTH = 8;
 
-// Reached from /auth/callback after a recovery-link code exchange, which
-// leaves the browser holding a real (temporary) session — updateUser here
-// just needs that session, no token handling of our own.
+// Reached from /auth/confirm (token-hash recovery link) or /auth/callback
+// (PKCE code), both of which leave the browser holding a real (temporary)
+// session — updateUser here just needs that session, no token handling of
+// our own. Opened without one (expired/reused link, or typed by hand), it
+// says so instead of failing on submit with "Auth session missing".
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [hasSession, setHasSession] = useState<boolean | null>(null);
   const router = useRouter();
   const supabase = createClient();
+
+  useEffect(() => {
+    supabase.auth
+      .getSession()
+      .then(({ data }) => setHasSession(!!data.session));
+  }, [supabase]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
     if (password.length < MIN_LENGTH) {
-      setError(`Password must be at least ${MIN_LENGTH} characters`);
+      setError(`A senha precisa ter pelo menos ${MIN_LENGTH} caracteres`);
       return;
     }
     if (password !== confirmPassword) {
-      setError("Passwords don't match");
+      setError("As senhas não coincidem");
       return;
     }
 
@@ -66,12 +75,40 @@ export default function ResetPasswordPage() {
               <CheckCircle className="h-6 w-6 text-primary" />
             </div>
             <CardTitle className="text-xl text-white">
-              Password updated
+              Senha atualizada
             </CardTitle>
             <CardDescription className="text-slate-400">
-              Taking you to your dashboard...
+              Entrando no sistema...
             </CardDescription>
           </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
+  if (hasSession === false) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
+        <Card className="w-full max-w-md border-slate-800 bg-slate-900">
+          <CardHeader className="items-center text-center">
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10">
+              <AlertTriangle className="h-6 w-6 text-red-400" />
+            </div>
+            <CardTitle className="text-xl text-white">
+              Link inválido ou expirado
+            </CardTitle>
+            <CardDescription className="text-slate-400">
+              O link de redefinição vale por 1 hora e só pode ser usado uma
+              vez. Peça um novo.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/forgot-password">
+              <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+                Pedir novo link
+              </Button>
+            </Link>
+          </CardContent>
         </Card>
       </div>
     );
@@ -85,10 +122,10 @@ export default function ResetPasswordPage() {
             <KeyRound className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-xl text-white">
-            Set a new password
+            Criar nova senha
           </CardTitle>
           <CardDescription className="text-slate-400">
-            Choose a new password for your account
+            Escolha uma senha nova para a sua conta
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -101,12 +138,12 @@ export default function ResetPasswordPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="password" className="text-slate-300">
-                New password
+                Nova senha
               </Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="At least 8 characters"
+                placeholder="Pelo menos 8 caracteres"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -117,12 +154,12 @@ export default function ResetPasswordPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="confirm-password" className="text-slate-300">
-                Confirm password
+                Confirmar senha
               </Label>
               <Input
                 id="confirm-password"
                 type="password"
-                placeholder="Re-enter your new password"
+                placeholder="Digite a nova senha de novo"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
@@ -133,10 +170,10 @@ export default function ResetPasswordPage() {
 
             <Button
               type="submit"
-              disabled={loading}
+              disabled={loading || hasSession === null}
               className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? "Updating..." : "Update password"}
+              {loading ? "Salvando..." : "Salvar nova senha"}
             </Button>
           </form>
 
@@ -144,7 +181,7 @@ export default function ResetPasswordPage() {
             href="/login"
             className="mt-6 flex items-center justify-center gap-2 text-sm text-slate-400 hover:text-slate-300"
           >
-            Back to sign in
+            Voltar para o login
           </Link>
         </CardContent>
       </Card>

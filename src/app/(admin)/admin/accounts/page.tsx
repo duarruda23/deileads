@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Copy, Trash2 } from "lucide-react";
+import { Copy, KeyRound, Trash2 } from "lucide-react";
+import { PasswordResetDialog } from "@/components/auth/password-reset-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -78,6 +79,7 @@ export default function AdminAccountsPage() {
   // separate from a plain boolean so the dialog can show which
   // account it's about to permanently destroy.
   const [deleteTarget, setDeleteTarget] = useState<AccountRow | null>(null);
+  const [resetTarget, setResetTarget] = useState<AccountRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
@@ -451,6 +453,17 @@ export default function AdminAccountsPage() {
                         >
                           {a.status === "active" ? "Suspender" : "Reativar"}
                         </Button>
+                        {a.owner && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            title="Redefinir senha do gestor"
+                            onClick={() => setResetTarget(a)}
+                          >
+                            <KeyRound className="size-4" />
+                            Senha
+                          </Button>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
@@ -469,6 +482,17 @@ export default function AdminAccountsPage() {
           )}
         </CardContent>
       </Card>
+
+      <PasswordResetDialog
+        open={!!resetTarget}
+        onOpenChange={(o) => {
+          if (!o) setResetTarget(null);
+        }}
+        endpoint={`/api/admin/accounts/${resetTarget?.id ?? ""}/password-reset`}
+        targetName={
+          resetTarget?.owner?.full_name || resetTarget?.owner?.email || "o gestor"
+        }
+      />
 
       {/* Delete confirmation — this is permanent and cascades to every
           domain row for the account (contacts, deals, conversations,

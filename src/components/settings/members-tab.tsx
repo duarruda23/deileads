@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import {
   AlertTriangle,
   Crown,
+  KeyRound,
   Loader2,
   Mail,
   MailX,
@@ -57,6 +58,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { RequireRole } from '@/components/auth/require-role';
+import { PasswordResetDialog } from '@/components/auth/password-reset-dialog';
 import { useAuth } from '@/hooks/use-auth';
 import type { AccountRole } from '@/lib/auth/roles';
 import { InviteMemberDialog } from './invite-member-dialog';
@@ -140,7 +142,7 @@ function fmtExpiresIn(iso: string): string {
 }
 
 export function MembersTab() {
-  const { user, canManageMembers } = useAuth();
+  const { user, canManageMembers, accountRole } = useAuth();
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -148,6 +150,7 @@ export function MembersTab() {
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [removingMember, setRemovingMember] = useState<Member | null>(null);
+  const [resettingMember, setResettingMember] = useState<Member | null>(null);
   const [pendingMemberAction, setPendingMemberAction] = useState<string | null>(
     null,
   );
@@ -424,6 +427,25 @@ export function MembersTab() {
                         user moused over. Now red is the default
                         state with a darker shade on hover so the
                         affordance reads at-a-glance. */}
+                    {/* Reset password. Only for someone below the
+                        caller (owner → anyone; admin → agent/viewer),
+                        same rule the API enforces. */}
+                    {canManageMembers &&
+                      !isOwnerRow &&
+                      !isSelf &&
+                      (accountRole === 'owner' ||
+                        (member.role !== 'admin' && member.role !== 'owner')) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          title="Redefinir senha"
+                          onClick={() => setResettingMember(member)}
+                          disabled={isBusy}
+                          className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                        >
+                          <KeyRound className="size-4" />
+                        </Button>
+                      )}
                     {canManageMembers && !isOwnerRow && !isSelf && (
                       <Button
                         variant="outline"
@@ -547,6 +569,15 @@ export function MembersTab() {
         open={inviteOpen}
         onOpenChange={setInviteOpen}
         onCreated={loadEverything}
+      />
+
+      <PasswordResetDialog
+        open={!!resettingMember}
+        onOpenChange={(o) => {
+          if (!o) setResettingMember(null);
+        }}
+        endpoint={`/api/account/members/${resettingMember?.user_id ?? ''}/password-reset`}
+        targetName={resettingMember?.full_name || resettingMember?.email || 'o membro'}
       />
 
       <Dialog
