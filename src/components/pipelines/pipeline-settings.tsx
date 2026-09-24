@@ -35,6 +35,12 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/use-auth";
+import { savePipelineMembers } from "@/lib/pipelines/members";
+import {
+  PipelineMembersPicker,
+  type MemberOption,
+} from "@/components/pipelines/pipeline-members-picker";
 
 const STAGE_TYPES: { value: PipelineStage["stage_type"]; label: string }[] = [
   { value: "open", label: "Aberto" },
@@ -60,6 +66,9 @@ interface PipelineSettingsProps {
   onOpenChange: (open: boolean) => void;
   pipeline: Pipeline;
   stages: PipelineStage[];
+  people: MemberOption[];
+  members: string[];
+  onMembersChanged: () => void;
   onPipelinesChanged: () => void;
   onStagesChanged: () => void;
   onCreateNewPipeline: () => void;
@@ -70,13 +79,18 @@ export function PipelineSettings({
   onOpenChange,
   pipeline,
   stages,
+  people,
+  members,
+  onMembersChanged,
   onPipelinesChanged,
   onStagesChanged,
   onCreateNewPipeline,
 }: PipelineSettingsProps) {
   const supabase = createClient();
+  const { accountId } = useAuth();
 
   const [name, setName] = useState(pipeline.name);
+  const [localMembers, setLocalMembers] = useState<string[]>(members);
   const [localStages, setLocalStages] = useState<PipelineStage[]>(stages);
   const [newStageName, setNewStageName] = useState("");
   const [newStageColor, setNewStageColor] = useState(STAGE_COLORS[0]);
@@ -92,9 +106,10 @@ export function PipelineSettings({
   useEffect(() => {
     if (!open) return;
     setName(pipeline.name);
+    setLocalMembers(members);
     setLocalStages([...stages].sort((a, b) => a.position - b.position));
     setShowDeleteConfirm(false);
-  }, [open, pipeline, stages]);
+  }, [open, pipeline, stages, members]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const sensors = useSensors(
@@ -125,17 +140,21 @@ export function PipelineSettings({
       position: i,
     }));
 
-    const [renameRes, stagesRes] = await Promise.all([
+    const [renameRes, stagesRes, membersRes] = await Promise.all([
       supabase
         .from("pipelines")
         .update({ name: name.trim() })
         .eq("id", pipeline.id),
       supabase.from("pipeline_stages").upsert(stageRows, { onConflict: "id" }),
+      accountId
+        ? savePipelineMembers(supabase, accountId, pipeline.id, localMembers)
+        : Promise.resolve({ error: null }),
     ]);
 
     setSaving(false);
+    onMembersChanged();
 
-    if (renameRes.error || stagesRes.error) {
+    if (renameRes.error || stagesRes.error || membersRes.error) {
       toast.error("Failed to save pipeline");
       return;
     }
@@ -257,6 +276,12 @@ export function PipelineSettings({
                   className="border-slate-700 bg-slate-800 text-white"
                 />
               </div>
+
+              <PipelineMembersPicker
+                people={people}
+                value={localMembers}
+                onChange={setLocalMembers}
+              />
 
               <div className="grid gap-2">
                 <Label className="text-slate-300">Stages</Label>

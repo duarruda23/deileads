@@ -51,6 +51,8 @@ import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
+import { useClaimPipelinePicker } from '@/components/pipelines/claim-pipeline-picker';
+import { claimContactLead } from '@/lib/leads/claim-client';
 
 const PAGE_SIZE = 25;
 
@@ -79,6 +81,7 @@ export default function ContactsPage() {
   const [poolCount, setPoolCount] = useState(0);
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [ownersMap, setOwnersMap] = useState<Record<string, string>>({});
+  const claimPicker = useClaimPipelinePicker();
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -210,21 +213,21 @@ export default function ContactsPage() {
 
   async function claimContact(contactId: string, e: React.MouseEvent) {
     e.stopPropagation();
+    const choice = await claimPicker.pickPipeline(null);
+    if (choice.cancelled) return;
     setClaimingId(contactId);
     try {
-      const res = await fetch(`/api/contacts/${contactId}/claim`, {
-        method: 'POST',
-      });
+      const res = await claimContactLead(contactId, choice.pipelineId);
       if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to claim lead');
+        toast.error(res.error || 'Failed to claim lead');
         if (res.status === 409) {
           fetchContacts();
           fetchPoolCount();
         }
         return;
       }
-      toast.success('Lead claimed');
+      if (res.warning) toast.warning(res.warning);
+      else toast.success('Lead claimed');
       fetchContacts();
       fetchPoolCount();
     } catch {
@@ -690,6 +693,8 @@ export default function ContactsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {claimPicker.dialog}
     </div>
   );
 }

@@ -336,6 +336,15 @@ export interface Pipeline {
   created_at: string;
 }
 
+/** A person responsible for a pipeline (047). A pipeline with no
+ *  members is a general pipeline shared by the whole account. */
+export interface PipelineMember {
+  pipeline_id: string;
+  profile_id: string;
+  account_id: string;
+  created_at: string;
+}
+
 export interface PipelineStage {
   id: string;
   pipeline_id: string;

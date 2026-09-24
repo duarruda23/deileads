@@ -9,6 +9,14 @@ import { PipelineBoard } from '@/components/pipelines/pipeline-board';
 import { PipelineSettings } from '@/components/pipelines/pipeline-settings';
 import { DealForm } from '@/components/pipelines/deal-form';
 import { PipelineAnalytics } from '@/components/pipelines/pipeline-analytics';
+import {
+  PipelineMembersPicker,
+  type MemberOption,
+} from '@/components/pipelines/pipeline-members-picker';
+import {
+  loadPipelineMembers,
+  savePipelineMembers,
+} from '@/lib/pipelines/members';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -82,7 +90,7 @@ export default function PipelinesPage() {
   const supabase = createClient();
   const canEditSettings = useCan('edit-settings');
   const canCreateDeals = useCan('send-messages');
-  const { accountId } = useAuth();
+  const { accountId, profile } = useAuth();
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>('');
@@ -90,6 +98,12 @@ export default function PipelinesPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [poolCount, setPoolCount] = useState(0);
+  // Pipeline responsáveis (047): pipeline_id → profile ids, plus the
+  // account's people to pick from and to show names in the selector.
+  const [membersByPipeline, setMembersByPipeline] = useState<
+    Record<string, string[]>
+  >({});
+  const [people, setPeople] = useState<MemberOption[]>([]);
 
   // Filters — applied client-side over the already-loaded deals for the
   // selected pipeline (no pagination here, so no extra round-trip per
@@ -107,6 +121,7 @@ export default function PipelinesPage() {
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
   const [newPipelineName, setNewPipelineName] = useState('');
+  const [newPipelineMembers, setNewPipelineMembers] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -164,6 +179,23 @@ export default function PipelinesPage() {
     [supabase]
   );
 
+  const refreshMembers = useCallback(async () => {
+    setMembersByPipeline(await loadPipelineMembers(supabase));
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    (async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, full_name, email')
+        .eq('account_id', accountId)
+        .order('full_name');
+      setPeople((data ?? []) as MemberOption[]);
+    })();
+    refreshMembers();
+  }, [supabase, accountId, refreshMembers]);
+
   const loadTags = useCallback(async () => {
     const { data } = await supabase.from('tags').select('*').order('name');
     return (data ?? []) as TagRecord[];
@@ -213,13 +245,23 @@ export default function PipelinesPage() {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const list = await loadPipelines();
+      const [list, members] = await Promise.all([
+        loadPipelines(),
+        loadPipelineMembers(supabase),
+      ]);
 
       if (cancelled) return;
       setPipelines(list);
       if (list.length > 0) {
+        // A vendor opens straight into their own pipeline rather than
+        // the general one, when they're responsible for one.
+        const mine = profile?.id
+          ? list.find((p) => members[p.id]?.includes(profile.id))
+          : undefined;
         setSelectedPipelineId((prev) =>
-          prev && list.some((p) => p.id === prev) ? prev : list[0].id
+          prev && list.some((p) => p.id === prev)
+            ? prev
+            : (mine ?? list[0]).id
         );
       } else {
         setSelectedPipelineId('');
@@ -229,7 +271,7 @@ export default function PipelinesPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadPipelines]);
+  }, [loadPipelines, supabase, profile?.id]);
 
   useEffect(() => {
     loadPoolCount();
@@ -380,7 +422,21 @@ export default function PipelinesPage() {
     }));
     await supabase.from('pipeline_stages').insert(stagesPayload);
 
+    if (newPipelineMembers.length > 0) {
+      const { error: membersError } = await savePipelineMembers(
+        supabase,
+        accountId,
+        pipeline.id,
+        newPipelineMembers
+      );
+      if (membersError) {
+        toast.error('Funil criado, mas não foi possível salvar os responsáveis');
+      }
+      await refreshMembers();
+    }
+
     setNewPipelineName('');
+    setNewPipelineMembers([]);
     setNewPipelineOpen(false);
     setSelectedPipelineId(pipeline.id);
     await refreshPipelines();
@@ -508,7 +564,21 @@ export default function PipelinesPage() {
                   }
                 >
                   <GitBranch className="mr-2 h-3.5 w-3.5" />
-                  {p.name}
+                  <span className="flex-1 truncate">{p.name}</span>
+                  {membersByPipeline[p.id]?.length ? (
+                    <span className="ml-2 max-w-[45%] truncate text-xs text-slate-500">
+                      {membersByPipeline[p.id]
+                        .map((id) => {
+                          const person = people.find((x) => x.id === id);
+                          return (
+                            person?.full_name?.split(' ')[0] ||
+                            person?.email ||
+                            '?'
+                          );
+                        })
+                        .join(', ')}
+                    </span>
+                  ) : null}
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator className="bg-slate-700" />
@@ -699,6 +769,13 @@ export default function PipelinesPage() {
               As etapas padrão (Novo Lead → Fechado Ganho/Perdido) serão criadas
               automaticamente.
             </p>
+            <div className="mt-4">
+              <PipelineMembersPicker
+                people={people}
+                value={newPipelineMembers}
+                onChange={setNewPipelineMembers}
+              />
+            </div>
           </div>
           <DialogFooter className="border-slate-700 bg-slate-900/50">
             <Button
@@ -726,6 +803,9 @@ export default function PipelinesPage() {
           onOpenChange={setSettingsOpen}
           pipeline={selectedPipeline}
           stages={stages}
+          people={people}
+          members={membersByPipeline[selectedPipeline.id] ?? []}
+          onMembersChanged={refreshMembers}
           onPipelinesChanged={refreshPipelines}
           onStagesChanged={refreshStages}
           onCreateNewPipeline={() => {

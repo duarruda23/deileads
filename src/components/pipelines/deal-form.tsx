@@ -7,6 +7,8 @@ import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
 import { CURRENCIES } from '@/lib/currency';
 import { dispatchDealStageEvent } from '@/lib/automations/dispatch-client';
+import { entryStageId } from '@/lib/pipelines/members';
+import { useClaimPipelinePicker } from '@/components/pipelines/claim-pipeline-picker';
 import type {
   Contact,
   Conversation,
@@ -114,6 +116,7 @@ export function DealForm({
 
   const [saving, setSaving] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const claimPicker = useClaimPipelinePicker();
   const [statusAction, setStatusAction] = useState<DealStatus | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -451,15 +454,51 @@ export function DealForm({
 
   async function handleClaim() {
     if (!deal || !profile?.id || !canEdit) return;
+    const choice = await claimPicker.pickPipeline(deal.pipeline_id);
+    if (choice.cancelled) return;
     setClaiming(true);
+
+    // Claiming into one of the claimer's own pipelines moves the deal
+    // to that pipeline's entry stage in the same write, so it can't end
+    // up "theirs" but still sitting in the general pipeline.
+    const targetPipelineId = choice.pipelineId;
+    const targetStageId = targetPipelineId
+      ? await entryStageId(supabase, targetPipelineId)
+      : null;
+    if (targetPipelineId && !targetStageId) {
+      setClaiming(false);
+      toast.error('Esse funil não tem etapas');
+      return;
+    }
     const { data, error } = await supabase
       .from('deals')
-      .update({ assigned_to: profile.id })
+      .update(
+        targetPipelineId
+          ? {
+              assigned_to: profile.id,
+              pipeline_id: targetPipelineId,
+              stage_id: targetStageId,
+            }
+          : { assigned_to: profile.id }
+      )
       .eq('id', deal.id)
       .select('id');
     setClaiming(false);
     if (error || !data?.length) {
       toast.error('Não foi possível assumir o negócio');
+      return;
+    }
+    if (targetPipelineId && targetStageId) {
+      void dispatchDealStageEvent({
+        contactId: deal.contact_id,
+        dealId: deal.id,
+        pipelineId: targetPipelineId,
+        stageId: targetStageId,
+        event: 'moved',
+      });
+      toast.success('Negócio assumido e movido para o seu funil');
+      onOpenChange(false);
+      onSaved();
       return;
     }
     setAssignedTo(profile.id);
@@ -483,6 +522,7 @@ export function DealForm({
   }
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
@@ -858,5 +898,7 @@ export function DealForm({
         </div>
       </SheetContent>
     </Sheet>
+    {claimPicker.dialog}
+    </>
   );
 }

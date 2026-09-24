@@ -6,6 +6,8 @@ import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
+import { useClaimPipelinePicker } from '@/components/pipelines/claim-pipeline-picker';
+import { claimContactLead } from '@/lib/leads/claim-client';
 import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, Task } from '@/types';
 import {
   Sheet,
@@ -107,6 +109,7 @@ export function ContactDetailView({
 
   // Deals tab
   const [deals, setDeals] = useState<Deal[]>([]);
+  const claimPicker = useClaimPipelinePicker();
   const [loadingDeals, setLoadingDeals] = useState(false);
 
   const fetchContact = useCallback(async () => {
@@ -299,19 +302,25 @@ export function ContactDetailView({
 
   async function claimLead() {
     if (!contactId) return;
+    // With a single deal we know which pipeline it's in, so the picker
+    // can mark it as "atual"; otherwise it just offers "keep".
+    const choice = await claimPicker.pickPipeline(
+      deals.length === 1 ? deals[0].pipeline_id : null
+    );
+    if (choice.cancelled) return;
     setClaiming(true);
     try {
-      const res = await fetch(`/api/contacts/${contactId}/claim`, { method: 'POST' });
+      const res = await claimContactLead(contactId, choice.pipelineId);
       if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to claim lead');
+        toast.error(res.error || 'Failed to claim lead');
         if (res.status === 409) {
           fetchContact();
           onUpdated();
         }
         return;
       }
-      toast.success('Lead claimed');
+      if (res.warning) toast.warning(res.warning);
+      else toast.success('Lead claimed');
       fetchContact();
       onUpdated();
     } catch {
@@ -489,6 +498,7 @@ export function ContactDetailView({
   }
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
@@ -985,5 +995,7 @@ export function ContactDetailView({
         )}
       </SheetContent>
     </Sheet>
+    {claimPicker.dialog}
+    </>
   );
 }
