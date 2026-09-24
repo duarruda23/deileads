@@ -7,59 +7,9 @@ import {
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
-
-/**
- * Resolve the caller's account_id + account_role from their profile.
- * Inlined here (rather than going through `@/lib/auth/account.getCurrentAccount`)
- * because the GET handler wants to return shaped 200s for every
- * non-auth failure mode, not throw — keeping the helper minimal lets
- * the existing response branches stay as-is.
- *
- * Returns null if the user has no profile or no account; callers
- * should treat that the same as "not connected".
- */
-async function resolveCaller(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-): Promise<{ accountId: string; isAdmin: boolean } | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('account_id, account_role')
-    .eq('user_id', userId)
-    .maybeSingle()
-  if (error || !data?.account_id) return null
-  return {
-    accountId: data.account_id as string,
-    isAdmin: data.account_role === 'owner' || data.account_role === 'admin',
-  }
-}
-
-/**
- * 034: whatsapp_config moved from one-row-per-account to one-row-
- * per-vendor (UNIQUE(account_id, user_id)). Every handler below now
- * resolves a *target* user_id — the caller's own by default, or
- * another account member's if the caller is admin+ and passes one
- * explicitly (`?userId=` on GET/DELETE, `user_id` in the POST body).
- * A non-admin who tries to target someone else silently falls back
- * to their own row rather than erroring — same "fail to your own
- * scope" posture as the rest of the 034 access model.
- */
-async function resolveTargetUserId(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  accountId: string,
-  callerId: string,
-  isAdmin: boolean,
-  requestedUserId: string | null,
-): Promise<string> {
-  if (!isAdmin || !requestedUserId || requestedUserId === callerId) return callerId
-  const { data } = await supabase
-    .from('profiles')
-    .select('user_id')
-    .eq('account_id', accountId)
-    .eq('user_id', requestedUserId)
-    .maybeSingle()
-  return data?.user_id ?? callerId
-}
+// Shared with /api/whatsapp/embedded-signup. Target user resolution:
+// `?userId=` on GET/DELETE, `user_id` in the POST body (admin+ only).
+import { resolveCaller, resolveTargetUserId } from '@/lib/whatsapp/config-access'
 
 // Lazy-initialised service-role client. We need it to detect a
 // phone_number_id already claimed by a *different* account — under

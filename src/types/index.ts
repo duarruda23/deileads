@@ -243,6 +243,13 @@ export interface WhatsAppConfig {
   /** 034: the one number per account Broadcasts + Message Templates
    *  send from, regardless of which vendor owns a given lead. */
   is_primary: boolean;
+  /** 046: 'coexistence' when connected through Embedded Signup with the
+   *  number kept in the WhatsApp Business app; 'manual' otherwise. */
+  onboarding_type?: 'manual' | 'coexistence';
+  /** 046: when Meta accepted the one-time contacts / history sync. */
+  smb_contacts_sync_at?: string | null;
+  smb_history_sync_at?: string | null;
+  smb_sync_error?: string | null;
   /** Populated by the settings list view (join on user_id → profiles.user_id). */
   profile?: Profile;
 }

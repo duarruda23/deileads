@@ -178,6 +178,75 @@ export async function subscribeWabaToApp(
   }
 }
 
+// ============================================================
+// Embedded Signup + coexistence (WhatsApp Business app numbers)
+// ============================================================
+
+export interface ExchangeEmbeddedSignupCodeArgs {
+  /** The `authResponse.code` FB.login hands the browser. Valid ~30s. */
+  code: string
+}
+
+/**
+ * Trade the Embedded Signup code for a business integration token
+ * scoped to the WABA the customer just shared with this app. Needs
+ * META_APP_ID + META_APP_SECRET on the server.
+ */
+export async function exchangeEmbeddedSignupCode(
+  args: ExchangeEmbeddedSignupCodeArgs
+): Promise<string> {
+  const appId = process.env.META_APP_ID || process.env.NEXT_PUBLIC_META_APP_ID
+  const appSecret = process.env.META_APP_SECRET
+  if (!appId || !appSecret) {
+    throw new Error('META_APP_ID and META_APP_SECRET must be set to finish Embedded Signup.')
+  }
+  const params = new URLSearchParams({
+    client_id: appId,
+    client_secret: appSecret,
+    code: args.code,
+  })
+  const response = await fetch(`${META_API_BASE}/oauth/access_token?${params.toString()}`)
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = (await response.json()) as { access_token?: string }
+  if (!data.access_token) {
+    throw new Error('Meta accepted the code but returned no access_token.')
+  }
+  return data.access_token
+}
+
+export type SmbSyncType = 'smb_app_state_sync' | 'history'
+
+export interface RequestSmbAppDataSyncArgs {
+  phoneNumberId: string
+  accessToken: string
+  syncType: SmbSyncType
+}
+
+/**
+ * Ask Meta to replay a coexistence number's WhatsApp Business app data
+ * as webhooks: contacts (`smb_app_state_sync`) or up to 6 months of
+ * chat history (`history`). Meta accepts each sync type ONCE per
+ * onboarding, within 24h of it — a second call errors.
+ */
+export async function requestSmbAppDataSync(
+  args: RequestSmbAppDataSyncArgs
+): Promise<void> {
+  const { phoneNumberId, accessToken, syncType } = args
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}/smb_app_data`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ messaging_product: 'whatsapp', sync_type: syncType }),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+}
+
 export interface GetSubscribedAppsArgs {
   wabaId: string
   accessToken: string

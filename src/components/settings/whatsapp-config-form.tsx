@@ -29,6 +29,7 @@ import {
   AccordionContent,
 } from '@/components/ui/accordion';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
+import { WhatsAppEmbeddedSignup } from './whatsapp-embedded-signup';
 
 const MASKED_TOKEN = '••••••••••••••••';
 
@@ -472,6 +473,46 @@ export function WhatsAppConfigForm({
                 'Preencha suas credenciais da API da Meta abaixo pra conectar sua conta do WhatsApp Business.'}
           </AlertDescription>
         </Alert>
+
+        {/* 046: Embedded Signup with coexistence — the number keeps
+            working in the WhatsApp Business app. The manual form
+            below stays for numbers that live only on the Cloud API. */}
+        <WhatsAppEmbeddedSignup
+          targetUserId={effectiveUserId}
+          onConnected={() => {
+            if (accountId && effectiveUserId) void fetchConfig(accountId, effectiveUserId);
+            onChanged?.();
+          }}
+        />
+
+        {config?.onboarding_type === 'coexistence' && (
+          <Alert
+            className={
+              config.smb_sync_error
+                ? 'bg-amber-950/30 border-amber-700/50'
+                : 'bg-slate-900 border-slate-700'
+            }
+          >
+            <AlertTitle className="text-white mb-1">
+              Coexistência ativa — o número continua no app WhatsApp Business
+            </AlertTitle>
+            <AlertDescription className="text-slate-400 text-sm space-y-1">
+              <p>
+                Contatos:{' '}
+                {config.smb_contacts_sync_at ? 'importação solicitada' : 'não solicitada'} ·
+                Histórico:{' '}
+                {config.smb_history_sync_at ? 'importação solicitada' : 'não solicitada'}
+              </p>
+              <p>
+                Mensagens enviadas pelo celular aparecem no inbox. Abra o app pelo menos
+                a cada 14 dias, senão a Meta desconecta o número.
+              </p>
+              {config.smb_sync_error && (
+                <p className="text-amber-200">Erro na importação: {config.smb_sync_error}</p>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Registration Status — the "is it actually live?" check.
             Credentials being valid is necessary but not sufficient;

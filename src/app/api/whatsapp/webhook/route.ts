@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
@@ -11,6 +11,14 @@ import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
+import {
+  handleCoexistenceWebhookChange,
+  isCoexistenceWebhookField,
+} from '@/lib/whatsapp/coexistence-webhook'
+
+// A coexistence history import arrives as large chunks; give the
+// post-response work room to finish (see `after` in POST below).
+export const maxDuration = 60
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -182,10 +190,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Process asynchronously so we can ack Meta within their timeout.
-  processWebhook(body).catch((error) => {
-    console.error('Error processing webhook:', error)
-  })
+  // Process after the response so we can ack Meta within their
+  // timeout. `after` keeps the function alive until the work is done;
+  // a bare un-awaited promise can be frozen by the serverless runtime
+  // as soon as the response is sent.
+  after(() =>
+    processWebhook(body).catch((error) => {
+      console.error('Error processing webhook:', error)
+    }),
+  )
 
   return NextResponse.json({ status: 'received' }, { status: 200 })
 }
@@ -202,6 +215,18 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
       // don't try to read message-shaped fields off a template event.
       if (isTemplateWebhookField(change.field)) {
         await handleTemplateWebhookChange(
+          { field: change.field, value: change.value as unknown },
+          supabaseAdmin(),
+        )
+        continue
+      }
+
+      // Coexistence numbers (WhatsApp Business app + Cloud API): app
+      // echoes, the one-time history import and contact-book sync.
+      // Different value shapes — never fall through to the inbound
+      // message branch below.
+      if (isCoexistenceWebhookField(change.field)) {
+        await handleCoexistenceWebhookChange(
           { field: change.field, value: change.value as unknown },
           supabaseAdmin(),
         )
