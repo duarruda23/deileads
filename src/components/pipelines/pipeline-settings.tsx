@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
 import { savePipelineMembers } from "@/lib/pipelines/members";
 import {
   PipelineMembersPicker,
@@ -88,6 +89,9 @@ export function PipelineSettings({
 }: PipelineSettingsProps) {
   const supabase = createClient();
   const { accountId } = useAuth();
+  // Agents manage pipelines too, but deleting one cascades its deals,
+  // so that stays admin-only (pipelines_delete policy, migration 049).
+  const canDeletePipeline = useCan("edit-settings");
 
   const [name, setName] = useState(pipeline.name);
   const [localMembers, setLocalMembers] = useState<string[]>(members);
@@ -387,13 +391,15 @@ export function PipelineSettings({
             </div>
 
             <DialogFooter className="border-slate-700 bg-slate-900/50">
-              <Button
-                variant="destructive"
-                onClick={() => setShowDeleteConfirm(true)}
-                className="mr-auto bg-red-600 hover:bg-red-700"
-              >
-                Delete Pipeline
-              </Button>
+              {canDeletePipeline && (
+                <Button
+                  variant="destructive"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="mr-auto bg-red-600 hover:bg-red-700"
+                >
+                  Delete Pipeline
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => onOpenChange(false)}

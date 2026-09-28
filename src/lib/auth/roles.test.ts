@@ -5,6 +5,7 @@ import {
   canDeleteAccount,
   canEditSettings,
   canManageMembers,
+  canManagePipelines,
   canSendMessages,
   canTransferOwnership,
   canViewOnly,
@@ -91,6 +92,13 @@ describe("capability predicates", () => {
     expect(canManageMembers("admin")).toBe(true);
     expect(canManageMembers("agent")).toBe(false);
     expect(canManageMembers("viewer")).toBe(false);
+  });
+
+  it("canManagePipelines: agent+ (viewer stays read-only)", () => {
+    expect(canManagePipelines("owner")).toBe(true);
+    expect(canManagePipelines("admin")).toBe(true);
+    expect(canManagePipelines("agent")).toBe(true);
+    expect(canManagePipelines("viewer")).toBe(false);
   });
 
   it("canEditSettings: admin+ only", () => {

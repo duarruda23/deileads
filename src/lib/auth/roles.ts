@@ -90,6 +90,15 @@ export function canSendMessages(role: AccountRole): boolean {
 }
 
 /**
+ * Owner / admin / agent: create pipelines, rename them, edit their
+ * stages and responsáveis. Deleting a whole pipeline (cascades its
+ * deals) stays behind `canEditSettings`. Mirrors migration 049.
+ */
+export function canManagePipelines(role: AccountRole): boolean {
+  return hasMinRole(role, "agent");
+}
+
+/**
  * Viewer: read-only across everything. Provided as a positive
  * predicate so UI gates read naturally (`if (canViewOnly(role))`
  * shows the "Read-only" tooltip without inverting `canSendMessages`).

@@ -8,6 +8,7 @@ import { useCan } from '@/hooks/use-can';
 import { CURRENCIES } from '@/lib/currency';
 import { dispatchDealStageEvent } from '@/lib/automations/dispatch-client';
 import { entryStageId } from '@/lib/pipelines/members';
+import { normalizePhone } from '@/lib/whatsapp/phone-utils';
 import { useClaimPipelinePicker } from '@/components/pipelines/claim-pipeline-picker';
 import { DealTasksSection } from '@/components/tasks/deal-tasks-section';
 import type {
@@ -40,6 +41,9 @@ import {
   Loader2,
   Radar,
   Tags as TagsIcon,
+  Phone,
+  Copy,
+  Mail,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -107,6 +111,16 @@ export function DealForm({
   const [notes, setNotes] = useState('');
 
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [phoneCopied, setPhoneCopied] = useState(false);
+  // Telefone/e-mail no card aberto, pra não precisar ir em Contatos.
+  const selectedContact = contacts.find((c) => c.id === contactId);
+
+  async function handleCopyPhone() {
+    if (!selectedContact?.phone) return;
+    await navigator.clipboard.writeText(selectedContact.phone);
+    setPhoneCopied(true);
+    setTimeout(() => setPhoneCopied(false), 2000);
+  }
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [linkedConversation, setLinkedConversation] =
     useState<Conversation | null>(null);
@@ -188,7 +202,7 @@ export function DealForm({
       const term = contactSearch.trim();
       const query = supabase
         .from('contacts')
-        .select('id, name, phone')
+        .select('id, name, phone, email')
         .order('name')
         .limit(30);
       const safeTerm = term.replace(/[%,()]/g, '');
@@ -218,7 +232,7 @@ export function DealForm({
     let cancelled = false;
     supabase
       .from('contacts')
-      .select('id, name, phone')
+      .select('id, name, phone, email')
       .eq('id', contactId)
       .maybeSingle()
       .then(({ data }) => {
@@ -570,6 +584,42 @@ export function DealForm({
                   </option>
                 ))}
               </select>
+
+              {selectedContact?.phone && (
+                <div className="flex items-center gap-1 rounded-lg border border-slate-700/60 bg-slate-800/50 px-2 py-1.5">
+                  <Phone className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                  <span className="flex-1 truncate text-sm text-white select-all">
+                    {selectedContact.phone}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyPhone}
+                    title="Copiar telefone"
+                    className="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-white"
+                  >
+                    {phoneCopied ? (
+                      <Check className="text-primary h-3.5 w-3.5" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                  <a
+                    href={`https://wa.me/${normalizePhone(selectedContact.phone)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Abrir no WhatsApp"
+                    className="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-green-400"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                  </a>
+                </div>
+              )}
+              {selectedContact?.email && (
+                <div className="flex items-center gap-1 px-2 text-xs text-slate-400">
+                  <Mail className="h-3 w-3 shrink-0" />
+                  <span className="truncate select-all">{selectedContact.email}</span>
+                </div>
+              )}
 
               {linkedConversation && (
                 <Link

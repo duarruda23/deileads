@@ -94,7 +94,7 @@ const SPEC_DEFAULT_STAGES = [
 export default function PipelinesPage() {
   useDocumentTitle('Pipelines');
   const supabase = createClient();
-  const canEditSettings = useCan('edit-settings');
+  const canManagePipelines = useCan('manage-pipelines');
   const canCreateDeals = useCan('send-messages');
   const { accountId, profile } = useAuth();
 
@@ -687,7 +687,7 @@ export default function PipelinesPage() {
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator className="bg-slate-700" />
-              {selectedPipeline && (
+              {selectedPipeline && canManagePipelines && (
                 <DropdownMenuItem
                   onClick={() => setSettingsOpen(true)}
                   className="text-slate-300"
@@ -712,7 +712,7 @@ export default function PipelinesPage() {
         <div className="flex items-center gap-2">
           <GatedButton
             variant="outline"
-            canAct={canEditSettings}
+            canAct={canManagePipelines}
             gateReason="create pipelines"
             onClick={() => setNewPipelineOpen(true)}
             className="border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
@@ -744,7 +744,7 @@ export default function PipelinesPage() {
             Create a pipeline to start tracking deals
           </p>
           <GatedButton
-            canAct={canEditSettings}
+            canAct={canManagePipelines}
             gateReason="create pipelines"
             onClick={() => setNewPipelineOpen(true)}
             className="bg-primary text-primary-foreground hover:bg-primary/90 mt-4"
