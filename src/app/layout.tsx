@@ -67,7 +67,13 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang="pt-BR"
+      // Chrome's built-in translator rewrites text nodes behind React's
+      // back; the next re-render that swaps text (e.g. "Save" →
+      // "Saving...") then throws removeChild/insertBefore and the whole
+      // page falls into "This page couldn't load". With lang="en" and a
+      // half-English UI, pt-BR users were always offered translation.
+      translate="no"
       data-theme={DEFAULT_THEME}
       className={`${inter.variable} h-full antialiased`}
       // The `theme-boot` script below rewrites `data-theme` on <html>
@@ -79,6 +85,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <meta name="google" content="notranslate" />
         <Script
           id="theme-boot"
           strategy="beforeInteractive"
@@ -86,7 +93,8 @@ export default function RootLayout({
         />
       </head>
       <body
-        className="min-h-full bg-background text-foreground font-sans"
+        translate="no"
+        className="notranslate min-h-full bg-background text-foreground font-sans"
         // Browser extensions (e.g. ColorZilla) inject attributes like
         // `cz-shortcut-listen` into <body> before React hydrates. That's
         // a real DOM difference from the server-rendered HTML, but it's
