@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { retryFetch } from '@/lib/supabase/retry-fetch'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
@@ -28,7 +29,8 @@ function supabaseAdmin() {
   if (!_adminClient) {
     _adminClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { global: { fetch: retryFetch } },
     )
   }
   return _adminClient
@@ -589,7 +591,10 @@ async function handleReaction(
 
 async function processMessage(
   message: WhatsAppMessage,
-  contact: { profile: { name: string }; wa_id: string },
+  // `profile` is optional in practice: coexistence (WhatsApp Business
+  // app) numbers and some senders arrive without it, and reading
+  // `.name` off undefined used to abort the whole webhook batch.
+  contact: { profile?: { name?: string }; wa_id?: string } | undefined,
   // Tenancy. Resolved from the matched whatsapp_config row; every
   // contact / conversation / message row created downstream is
   // stamped with this so any member of the account can see it.
@@ -609,7 +614,7 @@ async function processMessage(
   accountSuspended = false
 ) {
   const senderPhone = normalizePhone(message.from)
-  const contactName = contact.profile.name
+  const contactName = contact?.profile?.name?.trim() ?? ''
 
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
@@ -733,6 +738,10 @@ async function processMessage(
   })
 
   if (msgError) {
+    // 23505 on (conversation_id, message_id): Meta redelivered a
+    // message we already stored (it retries whenever our 200 is slow).
+    // Expected and harmless — skip it without flagging an error.
+    if (msgError.code === '23505') return
     console.error('Error inserting message:', msgError)
     return
   }
