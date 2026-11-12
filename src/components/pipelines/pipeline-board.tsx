@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -23,6 +23,9 @@ import { Plus } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useCan } from "@/hooks/use-can";
 import { formatCurrency } from "@/lib/currency";
+
+/** Cards renderizados por coluna antes do "Mostrar mais". */
+const CARDS_PER_PAGE = 40;
 
 interface PipelineBoardProps {
   stages: PipelineStage[];
@@ -224,6 +227,14 @@ function StageColumn({
   onAddTask?: (deal: Deal) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
+  // Colunas como "Entrada Geral" acumulam milhares de leads. Renderizar
+  // todos os cards (cada um um item arrastável) trava a tela, então
+  // mostramos um pedaço e liberamos mais sob demanda. Totais e contagem
+  // do cabeçalho continuam considerando todos os leads da coluna.
+  const [visibleCount, setVisibleCount] = useState(CARDS_PER_PAGE);
+  const visibleDeals =
+    deals.length > visibleCount ? deals.slice(0, visibleCount) : deals;
+  const hiddenCount = deals.length - visibleDeals.length;
 
   return (
     // On mobile each column is `w-[85vw]` (with a reasonable min/max)
@@ -263,16 +274,27 @@ function StageColumn({
             Drop a deal here
           </div>
         ) : (
-          deals.map((deal) => (
-            <DraggableDealCard
-              key={deal.id}
-              deal={deal}
-              stage={stage}
-              onEdit={onEditDeal}
-              marker={taskMarkers?.[deal.id]}
-              onAddTask={onAddTask}
-            />
-          ))
+          <>
+            {visibleDeals.map((deal) => (
+              <DraggableDealCard
+                key={deal.id}
+                deal={deal}
+                stage={stage}
+                onEdit={onEditDeal}
+                marker={taskMarkers?.[deal.id]}
+                onAddTask={onAddTask}
+              />
+            ))}
+            {hiddenCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setVisibleCount((c) => c + CARDS_PER_PAGE)}
+                className="rounded-lg border border-dashed border-slate-700 py-2 text-xs text-slate-400 hover:border-slate-600 hover:bg-slate-800 hover:text-white"
+              >
+                Mostrar mais ({hiddenCount} restantes)
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -291,7 +313,7 @@ function StageColumn({
   );
 }
 
-function DraggableDealCard({
+const DraggableDealCard = memo(function DraggableDealCard({
   deal,
   stage,
   onEdit,
@@ -323,5 +345,30 @@ function DraggableDealCard({
         onAddTask={onAddTask}
       />
     </div>
+  );
+}, areCardPropsEqual);
+
+function areCardPropsEqual(
+  a: { deal: Deal; stage: PipelineStage; onEdit: unknown; onAddTask?: unknown; marker?: TaskMarker<MarkerTask> },
+  b: typeof a,
+) {
+  // O marker é recriado a cada atualização de negócios; comparamos o
+  // conteúdo pra um card só renderizar de novo quando algo mudou nele.
+  const ma = a.marker;
+  const mb = b.marker;
+  const sameMarker =
+    ma === mb ||
+    (!!ma &&
+      !!mb &&
+      ma.state === mb.state &&
+      ma.openCount === mb.openCount &&
+      ma.task?.id === mb.task?.id &&
+      ma.task?.due_at === mb.task?.due_at);
+  return (
+    a.deal === b.deal &&
+    a.stage === b.stage &&
+    a.onEdit === b.onEdit &&
+    a.onAddTask === b.onAddTask &&
+    sameMarker
   );
 }
