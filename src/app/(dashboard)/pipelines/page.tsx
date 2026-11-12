@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useDocumentTitle } from '@/hooks/use-document-title';
 import { dispatchDealStageEvent } from '@/lib/automations/dispatch-client';
@@ -177,8 +177,11 @@ export default function PipelinesPage() {
       for (let from = 0; ; from += 500) {
         const { data, error } = await supabase
           .from('deals')
+          // Só as colunas que o card e o filtro usam. `contacts(*)` e
+          // `profiles(*)` arrastavam todas as colunas de milhares de
+          // linhas pela rede a cada abertura do funil.
           .select(
-            '*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)'
+            '*, contact:contacts(id, name, phone, email, company, avatar_url, owner_id), assignee:profiles!deals_assigned_to_fkey(id, full_name, email)'
           )
           .eq('pipeline_id', pipelineId)
           .order('created_at', { ascending: false })
@@ -244,14 +247,22 @@ export default function PipelinesPage() {
     async (contactIds: string[]) => {
       if (contactIds.length === 0) return {};
       const map: Record<string, string[]> = {};
-      for (let i = 0; i < contactIds.length; i += 200) {
-        const { data } = await supabase
-          .from('contact_tags')
-          .select('contact_id, tag_id')
-          .in('contact_id', contactIds.slice(i, i + 200));
+      const chunks: string[][] = [];
+      for (let i = 0; i < contactIds.length; i += 200)
+        chunks.push(contactIds.slice(i, i + 200));
+      // Em paralelo: antes eram N idas e voltas em fila (uma por 200
+      // contatos), o que somava segundos num funil grande.
+      const results = await Promise.all(
+        chunks.map((ids) =>
+          supabase
+            .from('contact_tags')
+            .select('contact_id, tag_id')
+            .in('contact_id', ids)
+        )
+      );
+      for (const { data } of results)
         for (const row of data ?? [])
           (map[row.contact_id] ??= []).push(row.tag_id);
-      }
       return map;
     },
     [supabase]
@@ -376,9 +387,18 @@ export default function PipelinesPage() {
     setTagsByContact(await loadTagsByContact(contactIds));
   }, [loadDeals, loadTagsByContact, selectedPipelineId]);
 
+  // Refs pra `handleDealMoved` não ser recriado a cada movimento de
+  // card (isso invalidava o memo de todos os cards do quadro).
+  const dealsRef = useRef(deals);
+  const stagesRef = useRef(stages);
+  useEffect(() => {
+    dealsRef.current = deals;
+    stagesRef.current = stages;
+  });
+
   const handleDealMoved = useCallback(
     async (dealId: string, newStageId: string) => {
-      const moved = deals.find((d) => d.id === dealId);
+      const moved = dealsRef.current.find((d) => d.id === dealId);
       // Optimistic update — board already animated; just persist.
       setDeals((prev) =>
         prev.map((d) => (d.id === dealId ? { ...d, stage_id: newStageId } : d))
@@ -402,7 +422,7 @@ export default function PipelinesPage() {
         });
         // Moving a lead forward is when its next step gets decided —
         // offer to schedule it right there (not for won/lost stages).
-        const stage = stages.find((s) => s.id === newStageId);
+        const stage = stagesRef.current.find((s) => s.id === newStageId);
         if (stage && stage.stage_type === 'open' && moved.contact_id) {
           toast(`Movido para ${stage.name}`, {
             action: {
@@ -421,7 +441,7 @@ export default function PipelinesPage() {
         }
       }
     },
-    [supabase, refreshDeals, deals, stages]
+    [supabase, refreshDeals]
   );
 
   const handleAddTask = useCallback((deal: Deal) => {
